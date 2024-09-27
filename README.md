@@ -7,5 +7,5 @@ MIMIC-IV-ED: https://physionet.org/content/mimic-iv-ed/2.2/
 MIMIC-IV: https://physionet.org/content/mimiciv/3.0/
 MIMIC-IV-Note: https://physionet.org/content/mimic-iv-note/2.2/
 
-and run the jupyter notebook: ``mimic_iv_preprocessing.ipynb```
+and run the jupyter notebook: ```mimic_iv_preprocessing.ipynb```
 
