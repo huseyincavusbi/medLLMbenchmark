@@ -7,7 +7,7 @@ MIMIC-IV-ED: https://physionet.org/content/mimic-iv-ed/2.2/ \
 MIMIC-IV: https://physionet.org/content/mimiciv/3.0/ \
 MIMIC-IV-Note: https://physionet.org/content/mimic-iv-note/2.2/
 
-Run the jupyter notebooks in the following order:
+Run the jupyter notebooks in the following order:\
 ```MIMIC-IV-Ext-Creation.ipynb```\
 ```create_ground_truth_specialty.ipynb```\
 ```Claude_triage_diagnosis_specialty.ipynb```\
@@ -24,3 +24,6 @@ Run the .py files in the following order:\
 ```postprocess_diagnosis_prediction.py```\
 ```postprocess_triage_prediction.py```\
 ```additional_postprocess.py```
+
+
+
