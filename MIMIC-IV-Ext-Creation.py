@@ -405,10 +405,6 @@ df = df[mask]
 df = df.drop(columns=['text', 'preprocessed_text', 'past_medication'], inplace=False)
 
 
-## Extract the first 2200 (goal is to predict 2000, 200 are in case rows need to be remove - see postprocessing and additional postprocessing)
-df = df[:2200]
-
-
 ## convert primary and secondary diagnoses into a list of diagnoses for each patient
 ## replace colon without \n to colon with \n
 def colon_replacement(text):
@@ -451,6 +447,9 @@ def remove_number_prefix(item):
 liste = liste.apply(lambda lst: [remove_number_prefix(item) for item in lst])
 
 df["secondary_diagnosis"] = liste
+
+## Extract the first 2200 (goal is to predict 2000, 200 are in case rows need to be remove - see postprocessing and additional postprocessing)
+df = df[:2200]
 
 
 ## save file
