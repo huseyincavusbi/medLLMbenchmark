@@ -44,6 +44,13 @@ def remove_leading_newline(text):
     else:
         return text  # Return the input unchanged if it's not a string
 
+df["specialty_Claude3.5"] = df["specialty_Claude3.5"].apply(remove_leading_newline)
+df["specialty_Claude3"] = df["specialty_Claude3"].apply(remove_leading_newline)
+df["specialty_Haiku"] = df["specialty_Haiku"].apply(remove_leading_newline)
+df["specialty_Claude3.5_Clinical"] = df["specialty_Claude3.5_Clinical"].apply(remove_leading_newline)
+df["specialty_Claude3_Clinical"] = df["specialty_Claude3_Clinical"].apply(remove_leading_newline)
+df["specialty_Haiku_Clinical"] = df["specialty_Haiku_Clinical"].apply(remove_leading_newline)
+
 
 ## function to create a list of the predicted specialties 
 def create_list(text):
