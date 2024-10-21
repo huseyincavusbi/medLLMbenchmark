@@ -103,7 +103,7 @@ def get_medication(text):
         # print(lower_text)
         return None
 
-unique_df["past_medication"] = unique_df['text'].apply(get_medication)
+unique_df["medication"] = unique_df['text'].apply(get_medication)
 
 
 ## EXTRACT: History of Present Illness (to be continued and refined later on in the code)
@@ -123,8 +123,7 @@ unique_df['preprocessed_text'] = unique_df['text'].apply(get_HPI)
 unique_df = unique_df.drop(columns=['subject_id_x', 'subject_id_y', 'hadm_id_x', 'gender_y'])
 unique_df = unique_df.rename(columns={
     'hadm_id_y': 'hadm_id',
-    'gender_x': 'gender',
-    'symptoms': 'preprocessed_text'
+    'gender_x': 'gender'
 })
 df = unique_df.copy()
 
@@ -189,7 +188,7 @@ df.loc[:,'patient_info'] = df.apply(create_patient_info, axis=1)
 # Drop columns that are no longer needed for the analysis or further processing and rearrange columns
 df = df.drop(columns=["gender", "race", "anchor_age", "temperature", "heartrate", "resprate", "o2sat", "sbp", "dbp"])
 
-df = df[['stay_id', 'subject_id', 'hadm_id', "text", 'patient_info', 'initial_vitals', 'pain', 'chiefcomplaint', 'preprocessed_text', 'past_medication', 'tests', 'acuity', 'icd_code', 'icd_title', 'icd_version']]
+df = df[['stay_id', 'subject_id', 'hadm_id', "text", 'patient_info', 'initial_vitals', 'pain', 'chiefcomplaint', 'preprocessed_text', 'medication', 'tests', 'acuity', 'icd_code', 'icd_title', 'icd_version']]
 
 
 ## remove rows that have nans in acuity, because acuity will be predicted and NaNs carry no useful information
@@ -200,7 +199,7 @@ df = df.dropna(subset=['tests'])
 ## convert nans to empty strings
 df["pain"] = df['pain'].fillna("")
 df["chiefcomplaint"] = df['chiefcomplaint'].fillna("")
-df["past_medication"] = df['past_medication'].fillna("")
+df["medication"] = df['medication'].fillna("")
 
 
 ## convert numpy.float64 to numpy.int64
@@ -402,7 +401,7 @@ newline_counts = df['primary_diagnosis'].apply(count_single_newlines).tolist()
 mask = [value < 16 for value in newline_counts]
 df = df[mask]
 
-df = df.drop(columns=['text', 'preprocessed_text', 'past_medication'], inplace=False)
+df = df.drop(columns=['text', 'preprocessed_text', 'medication'], inplace=False)
 
 
 ## convert primary and secondary diagnoses into a list of diagnoses for each patient
