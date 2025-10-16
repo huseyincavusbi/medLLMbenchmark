@@ -1,0 +1,55 @@
+{
+  "columns": [
+    "stay_id",
+    "text",
+    "HPI",
+    "tests",
+    "past_medication",
+    "diagnosis",
+    "primary_diagnosis",
+    "secondary_diagnosis",
+    "triage",
+    "patient_info",
+    "initial_vitals",
+    "diagnosis_gt",
+    "triage_MedGemma-4B-IT_general",
+    "triage_MedGemma-4B-IT_clinical",
+    "diag_spec_MedGemma-4B-IT_general",
+    "diag_spec_MedGemma-4B-IT_clinical"
+  ],
+  "n_rows": 100,
+  "triage_total_gt": 100,
+  "triage": {
+    "triage_MedGemma-4B-IT_general": {
+      "total_gt": 100,
+      "exact": 65,
+      "within_1": 96,
+      "exact_pct": 65.0,
+      "within_1_pct": 96.0
+    },
+    "triage_MedGemma-4B-IT_clinical": {
+      "total_gt": 100,
+      "exact": 53,
+      "within_1": 94,
+      "exact_pct": 53.0,
+      "within_1_pct": 94.0
+    }
+  },
+  "specialty_metrics": {},
+  "diagnosis_metrics": {
+    "diag_spec_MedGemma-4B-IT_general": {
+      "total_gt": 100,
+      "top1": 1,
+      "top3": 1,
+      "top1_pct": 1.0,
+      "top3_pct": 1.0
+    },
+    "diag_spec_MedGemma-4B-IT_clinical": {
+      "total_gt": 100,
+      "top1": 1,
+      "top3": 1,
+      "top1_pct": 1.0,
+      "top3_pct": 1.0
+    }
+  }
+}
