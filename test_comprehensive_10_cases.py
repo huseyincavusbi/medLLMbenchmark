@@ -10,11 +10,38 @@ from functions.LLM_predictions import (
     create_local_chain, 
     test_local_llm_connection
 )
+import re
 
 ## Configuration
 MODEL_NAME = "MedGemma-4B-IT"
-BASE_URL = "http://localhost:1234/v1"
+BASE_URL = "http://192.168.1.203:1234/v1"
 NUM_CASES = 10
+
+def parse_triage_level(response):
+    """Parse triage level from LLM response"""
+    if not response or not isinstance(response, str):
+        return None
+    
+    # Try <acuity> tag first
+    match = re.search(r'<acuity>(\d+)</acuity>', response, re.IGNORECASE)
+    if match:
+        level = int(match.group(1))
+        if 1 <= level <= 5:
+            return level
+    
+    # Try **ESI Level:** **number**
+    match = re.search(r'\*\*ESI Level:\*\*\s*\*\*(\d+)\*\*', response)
+    if match:
+        level = int(match.group(1))
+        if 1 <= level <= 5:
+            return level
+    
+    # Try any standalone digit 1-5
+    digits = re.findall(r'\b([1-5])\b', response)
+    if digits:
+        return int(digits[0])
+    
+    return None
 
 print("="*80)
 print("COMPREHENSIVE LOCAL LLM TEST")
@@ -109,9 +136,14 @@ triage_general_results = []
 for idx, row in df_test.iterrows():
     print(f"  Case {idx+1}/{NUM_CASES}...", end=" ", flush=True)
     try:
-        prediction = get_prediction_GeneralUser(row, chain_triage_general)
-        triage_general_results.append(prediction)
-        print(f"✓ ESI {prediction}")
+        raw_response = get_prediction_GeneralUser(row, chain_triage_general)
+        prediction = parse_triage_level(raw_response)
+        if prediction is not None:
+            triage_general_results.append(prediction)
+            print(f"✓ ESI {prediction}")
+        else:
+            triage_general_results.append(f"ERROR: Could not parse response")
+            print(f"✗ Could not parse: {raw_response[:50]}...")
     except Exception as e:
         triage_general_results.append(f"ERROR: {str(e)}")
         print(f"✗ Error: {e}")
@@ -143,9 +175,14 @@ triage_clinical_results = []
 for idx, row in df_test.iterrows():
     print(f"  Case {idx+1}/{NUM_CASES}...", end=" ", flush=True)
     try:
-        prediction = get_prediction_ClinicalUser(row, chain_triage_clinical)
-        triage_clinical_results.append(prediction)
-        print(f"✓ ESI {prediction}")
+        raw_response = get_prediction_ClinicalUser(row, chain_triage_clinical)
+        prediction = parse_triage_level(raw_response)
+        if prediction is not None:
+            triage_clinical_results.append(prediction)
+            print(f"✓ ESI {prediction}")
+        else:
+            triage_clinical_results.append(f"ERROR: Could not parse response")
+            print(f"✗ Could not parse: {raw_response[:50]}...")
     except Exception as e:
         triage_clinical_results.append(f"ERROR: {str(e)}")
         print(f"✗ Error: {e}")

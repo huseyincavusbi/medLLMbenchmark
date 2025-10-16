@@ -13,7 +13,7 @@ from functions.LLM_predictions import (
 
 ## Configuration
 MODEL_NAME = "MedGemma-4B-IT"
-BASE_URL = "http://localhost:1234/v1"
+BASE_URL = "http://192.168.1.203:1234/v1"
 NUM_CASES = 100
 
 print("="*80)
