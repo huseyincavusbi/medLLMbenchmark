@@ -1,0 +1,11 @@
+# Local LLM inference via LM Studio (OpenAI-compatible API)
+openai==2.3.0           # API client for LM Studio
+                        # Used in: functions/LLM_predictions.py
+
+# Data manipulation
+pandas==2.2.3           # Data processing and CSV handling
+                        # Used in: All prediction scripts, postprocessing scripts
+
+# Progress bars
+tqdm==4.67.1            # Progress bars for long-running predictions
+                        # Used in: All prediction scripts

@@ -1,16 +1,22 @@
-## LLM TO CREATE GROUND TRUTH FOR SPRCIALTY AND MERGE IT INTO THE DATASET
+## LLM TO CREATE GROUND TRUTH FOR SPECIALTY AND MERGE IT INTO THE DATASET
+## Using Local LLM via LM Studio
 
-## import libraries
+## Import libraries
 import pandas as pd
 from tqdm import tqdm
-import os
-import boto3
-from langchain.prompts import PromptTemplate
-from langchain_aws import ChatBedrock
 
-## import function
-from functions.LLM_predictions import get_ground_truth_specialty
+## Import function
+from functions.LLM_predictions import get_ground_truth_specialty, create_local_chain, test_local_llm_connection
 
+
+## Configuration
+BASE_URL = "http://localhost:1234/v1"  # LM Studio uses whatever model you loaded
+
+## Test LM Studio connection
+print("Testing local LLM connection...")
+if not test_local_llm_connection(BASE_URL):
+    print("\n⚠️  Please start LM Studio server before running this script.")
+    exit(1)
 
 ## Load Data from mimic_iv_preprocessing.py
 df = pd.read_csv('MIMIC-IV-Ext-Triage-Specialty-Diagnosis-Decision-Support.csv')
@@ -29,22 +35,14 @@ prompt = """You are an experienced healthcare professional with expertise in med
 Diagnosis: {diagnosis}."""
 
 
-## set AWS credentials
-os.environ["AWS_ACCESS_KEY_ID"]="Enter your AWS Access Key ID"
-os.environ["AWS_SECRET_ACCESS_KEY"]="Enter your AWS Secret Access Key"
-
-prompt_chain = PromptTemplate(template=prompt,input_variables=["diagnosis"])
-client = boto3.client(service_name="bedrock-runtime", region_name=str("us-east-1"))
+## Create local LLM chain
+chain_local = create_local_chain(prompt, base_url=BASE_URL)
 
 
-## Claude Sonnet 3.5
-llm_claude35 = ChatBedrock(model_id="anthropic.claude-3-5-sonnet-20240620-v1:0", model_kwargs={"temperature": 0}, client=client)
-chain_claude35 = prompt_chain | llm_claude35
-
-
-## Run LLM (CLaude Sonnet 3.5) to retrieve ground truth specialties 
+## Run LLM to retrieve ground truth specialties
+print("\nGenerating ground truth specialties with local LLM...")
 tqdm.pandas()
-unique_diagnosis["specialty_primary_diagnosis"] = unique_diagnosis.progress_apply(lambda row: get_ground_truth_specialty(row, chain_claude35), axis=1)
+unique_diagnosis["specialty_primary_diagnosis"] = unique_diagnosis.progress_apply(lambda row: get_ground_truth_specialty(row, chain_local), axis=1)
 
 unique_diagnosis.to_csv('df_specialty_groundtruth.csv', index=False)
 
@@ -91,4 +89,5 @@ df_triage  = df_triage.drop(columns=["subject_id", "hadm_id", "pain", "chiefcomp
 df_diag_spec.to_csv('MIMIC-IV-Ext-Diagnosis-Specialty.csv', index=False)
 df_triage.to_csv('MIMIC-IV-Ext-Triage.csv', index=False)
 
+print(f"\n✅ Ground truth specialties generated and datasets saved")
 
