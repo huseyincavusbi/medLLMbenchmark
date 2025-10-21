@@ -1,27 +1,26 @@
-## PREPROCESSING MIMIC_IV
-
-## import libraries
+## Import Libraries
 import pandas as pd
 import numpy as np
-from io import StringIO
-from tqdm import tqdm
 import re
+from io import StringIO
 
-## Import datasets from MIMIC-IV, MIMIC-IV-ED, MIMIC-IV-Note
+from tqdm import tqdm
+
+ 
+# MIMIC-IV-Ext Creation
+## Import Datasets from MIMIC-IV, MIMIC-IV-ED, MIMIC-IV-Note
 ## Load from MIMIC-IV-ED
-triage = pd.read_csv("/mimic-iv-ed-2.2/ed/triage.csv", on_bad_lines='skip', low_memory=False)
-vitalsigns = pd.read_csv("/mimic-iv-ed-2.2/ed/vitalsign.csv", on_bad_lines='skip', low_memory=False)
-ed_stays = pd.read_csv("/mimic-iv-ed-2.2/ed/edstays.csv")
-diagnostics = pd.read_csv('/mimic-iv-ed-2.2/ed/diagnosis.csv',on_bad_lines='skip')
-
+triage = pd.read_csv("/data/local/llm-evaluation/mimic-iv-ed-2.2/ed/triage.csv", on_bad_lines='skip', low_memory=False)
+ed_stays = pd.read_csv("/data/local/llm-evaluation/mimic-iv-ed-2.2/ed/edstays.csv")
+diagnostics = pd.read_csv('/data/local/llm-evaluation/mimic-iv-ed-2.2/ed/diagnosis.csv',on_bad_lines='skip')
 
 ## Load from MIMIC-IV
-patients = pd.read_csv("/mimic-iv/mimic-iv-3.0/hosp/patients.csv.gz", compression='gzip', low_memory=False)
+patients = pd.read_csv("/data/local/llm-evaluation/mimic-iv/mimic-iv-3.0/hosp/patients.csv.gz", compression='gzip', low_memory=False)
 
 
 ## Load Discharge from MIMIC-IV-Note
 # Read the discharge.csv file into a string
-txt = open('/mimic-iv-note/discharge.csv').read()
+txt = open('/data/local/llm-evaluation/mimic-iv-note/discharge.csv').read()
 
 # Replace all occurrences of '|' with ',<vl>' (custom delimiter), ',""""\n' with ',<br>' (indicating a line break marker), 'Followup Instructions:\n___\n""""' with new markers '</br>|' for parsing
 txt = txt.replace('|', ',<vl>')
@@ -38,12 +37,12 @@ txt = txt.replace('"', '')
 txt = txt.replace('text\n', 'text|')
 
 # Use pandas to read the modified txt content as a CSV, using '|' as the line terminator
-df = pd.read_csv(StringIO(txt), lineterminator='|', on_bad_lines='warn')
+discharge = pd.read_csv(StringIO(txt), lineterminator='|', on_bad_lines='warn')
 
-
-## merge different datasets
+ 
+## Select MIMIC-IV-Note cases only present in MIMIC-IV-ED dataset
 ## Add "stay_id" and "text" from edstays dataset
-for index, row in df.iterrows():
+for index, row in discharge.iterrows():
     try:
         hadm_id = float(row['hadm_id'])
         # Find the corresponding 'stay_id' in 'ed_stays' DataFrame that matches the 'hadm_id'
@@ -53,32 +52,30 @@ for index, row in df.iterrows():
         if stay_id.empty:
             continue
 
-        df.at[index, 'stay_id'] = stay_id.iloc[0]
+        discharge.at[index, 'stay_id'] = stay_id.iloc[0]
         
     except Exception as e:
-        print(f"{e} at {index}")
+        #print(f"{e} at {index}")
         continue
 
-df = df[df['stay_id'].notnull()]
+discharge = discharge[discharge['stay_id'].notnull()]
+discharge[['subject_id', 'hadm_id', 'note_seq']] = discharge[['subject_id', 'hadm_id', 'note_seq']].astype(int)
+
+ 
+## Merge all datasets
+df=pd.merge(triage,discharge,on=["subject_id", "stay_id"],how="inner")
+df=pd.merge(df,ed_stays,on=["subject_id", "stay_id", "hadm_id"],how="inner")
+df = df.drop_duplicates(subset=['subject_id'])
+df=pd.merge(df,patients.drop("gender",axis=1),on=["subject_id"],how="inner")
+df=pd.merge(df,diagnostics[diagnostics["seq_num"] == 1],on=["subject_id", "stay_id"],how="inner")
+df = df.dropna(subset=['icd_code'])
+
+df = df.drop(columns=["note_id", "note_type", "note_seq", "charttime", "storetime", "intime", "outtime", "anchor_year", "anchor_year_group", "dod" ])
 
 
-## Add all columns from Triage dataset
-# merged to the triage df, because it is unique on stay_id
-df = pd.merge(triage, df, on="stay_id", how="inner")
-
-## Add gender and race from edstays dataset
-df = pd.merge(df, ed_stays, on='stay_id')
-
-# Removing Duplicate Rows Based on subject_id
-unique_df = df.drop_duplicates(subset=['subject_id_x'])
-
-
-## Add age from patient dataset
-unique_df = pd.merge(unique_df, patients, on='subject_id')
-
-
+ 
 ## Extract Relevant Information from the Clinical Text
-## EXTRACT: Tests
+#### Extract tests, past medication and HPI (to be continued and refined later on in the code)
 def get_tests(text):
     lower_text = text.lower()
     try:
@@ -87,13 +84,8 @@ def get_tests(text):
         else:
             return lower_text.split("pertinent results:")[1].split('brief hospital course:')[0]
     except:
-        #print(lower_text)
         return None
-
-unique_df["tests"] = unique_df['text'].apply(get_tests)
-
-
-## EXTRACT: Past medication
+    
 def get_medication(text):
     lower_text = text.lower()
     try:
@@ -103,10 +95,6 @@ def get_medication(text):
         # print(lower_text)
         return None
 
-unique_df["medication"] = unique_df['text'].apply(get_medication)
-
-
-## EXTRACT: History of Present Illness (to be continued and refined later on in the code)
 def get_HPI(text):
     # Replace custom placeholders with their intended characters and clean up text markers
     text = text.replace('<comma>', ',').replace('<br>', '').replace('</br>', '')
@@ -115,34 +103,12 @@ def get_HPI(text):
     text = text.split('History of Present Illness:')[-1].split('Physical Exam:')[0]
     return text
 
-unique_df['preprocessed_text'] = unique_df['text'].apply(get_HPI)
+df["tests"] = df['text'].apply(get_tests)
+df["past_medication"] = df['text'].apply(get_medication)
+df['preprocessed_text'] = df['text'].apply(get_HPI)
 
-
-## Cleaning and organizing the Dataframe for clarity
-## Drop Redundant Columns and Rename Relevant Columns for Consistency and Clarity
-unique_df = unique_df.drop(columns=['subject_id_x', 'subject_id_y', 'hadm_id_x', 'gender_y'])
-unique_df = unique_df.rename(columns={
-    'hadm_id_y': 'hadm_id',
-    'gender_x': 'gender'
-})
-df = unique_df.copy()
-
-
-## Merge ICD information from diagnostics dataset
-# Filter the diagnostics data to keep only rows where "seq_num" equals 1 (indicating the most relevant ICD code)
-diagnostics = diagnostics[diagnostics["seq_num"] == 1]
-
-# Merge diagnostics data into df to add 'icd_code', 'icd_title', and 'icd_version' columns
-df = df.merge(diagnostics[['stay_id', 'icd_code', 'icd_title', "icd_version"]],
-              on='stay_id', how='left')
-
-# Remove rows where 'icd_code' is NaN
-df = df.dropna(subset=['icd_code'])
-
-# Drop columns that are no longer needed for the analysis or further processing
-df = df.drop(columns=["note_id", "note_type", "note_seq", "charttime", "storetime", "intime", "outtime", "arrival_transport", "disposition", "anchor_year", "anchor_year_group", "dod" ])
-
-## Create Initial Vitals from Temperature, Heartrate, respiration rate, o2 saturation, bloodpressure (dbp, sbp)
+ 
+#### Create Initial Vitals from Temperature, Heartrate, respiration rate, o2 saturation, bloodpressure (dbp, sbp)
 def create_vitals(row):
     vitals = []
     
@@ -161,10 +127,10 @@ def create_vitals(row):
     
     return ", ".join(vitals)
 
-df.loc[:,'initial_vitals'] = df.apply(create_vitals, axis=1)
+df['initial_vitals'] = df.apply(create_vitals, axis=1)
 
-
-## Create Patient Info from Gender, Race and Year
+ 
+#### Create Patient Info from Gender, Race and Year
 def create_patient_info(row):
     patient_info = []
     
@@ -181,26 +147,22 @@ def create_patient_info(row):
     
     return ", ".join(patient_info)
 
-df.loc[:,'patient_info'] = df.apply(create_patient_info, axis=1)
-
-
-## Cleaning and organizing the Dataframe for clarity
-# Drop columns that are no longer needed for the analysis or further processing and rearrange columns
+df['patient_info'] = df.apply(create_patient_info, axis=1)
+## Drop columns that are no longer needed for the analysis or further processing and rearrange columns
 df = df.drop(columns=["gender", "race", "anchor_age", "temperature", "heartrate", "resprate", "o2sat", "sbp", "dbp"])
 
-df = df[['stay_id', 'subject_id', 'hadm_id', "text", 'patient_info', 'initial_vitals', 'pain', 'chiefcomplaint', 'preprocessed_text', 'medication', 'tests', 'acuity', 'icd_code', 'icd_title', 'icd_version']]
-
+ 
+#### Cleaning and organizing the DataFrame for clarity
+df = df[['stay_id', 'subject_id', 'hadm_id', "text", 'patient_info', 'initial_vitals', 'pain', 'chiefcomplaint', 'preprocessed_text', 'past_medication', 'tests', 'acuity', 'icd_code', 'icd_title', 'icd_version', 'arrival_transport', 'disposition']]
 
 ## remove rows that have nans in acuity, because acuity will be predicted and NaNs carry no useful information
 df = df.dropna(subset=['acuity'])
 df = df.dropna(subset=['tests'])
 
-
 ## convert nans to empty strings
 df["pain"] = df['pain'].fillna("")
 df["chiefcomplaint"] = df['chiefcomplaint'].fillna("")
-df["medication"] = df['medication'].fillna("")
-
+df["past_medication"] = df['past_medication'].fillna("")
 
 ## convert numpy.float64 to numpy.int64
 df['acuity'] = df['acuity'].astype(np.int64)
@@ -210,14 +172,13 @@ df['icd_version'] = df['icd_version'].astype(np.int64)
 ## rename acuity to triage
 df = df.rename(columns={"acuity": "triage"})
 
-
 ## find the rows that have "history of present illness" in the "text" column and keep only these rows
 hpi = df['text'].str.contains('history of present illness', case=False, na=False)
 hpi_index = hpi[hpi==True].index
 df = df.loc[hpi_index]
 
-
-## EXTRACT: HPI
+ 
+#### Extract HPI
 def extract_hpi(text):
     pos_past_med_hist = text.lower().find('past medical history:')
     pos_soc_hist = text.lower().find('social history:')
@@ -234,8 +195,8 @@ def extract_hpi(text):
 
 df["HPI"] = df["preprocessed_text"].apply(extract_hpi)
 
-
-## EXTRACT: DIAGNOSIS
+ 
+#### Extract Diagnosis
 def extract_diagnosis(text):
     split_text = text.split("Discharge Diagnosis:" )[-1].split("Discharge Condition:")[0]
     split_text= split_text.replace('<comma>', ', ')
@@ -243,8 +204,8 @@ def extract_diagnosis(text):
 
 df["diagnosis"] = df["text"].apply(extract_diagnosis)
 
-
-## PROCESS HPI
+ 
+#### Process HPI
 ## cut length of HPI <2000 and the tests <3000
 string_lengths = df['HPI'].str.len()
 mask = string_lengths<2000
@@ -282,18 +243,16 @@ def extract_only_hpi(text):
 tqdm.pandas()
 df["HPI"] = df["HPI"].progress_apply(extract_only_hpi)
 
-
 ## Remove the ones that have ED in them
 mask = df["HPI"].str.contains(r'\bED', case=False, na=False)
 df = df[~mask]
 
-
 ## remove where test is nan to be able to compare between normal user and expert
 df = df.dropna(subset=['tests'])
 
-
-## PROCESS DIAGNOSIS
-## Removing Specific Headers, Unwanted Secrtions, and irrelevant Records
+ 
+#### Process Diagnosis
+#### Removing Specific Headers, Unwanted Sections, and Irrelevant Records
 ## remove the header "discharge diagnosis"
 def remove_header(text, header):
     text = re.sub(re.compile(header, re.IGNORECASE), "", text)
@@ -324,10 +283,11 @@ def delete_after_string(text):
     return text
 df['diagnosis'] = df['diagnosis'].apply(delete_after_string)
 
-
-## FILTER ROWS with excessive Information to preserve prediction integrity
+ 
+#### Filter Rows with Excessive Information to Preserve Prediction Integrity
 # Filter out rows in 'HPI' that contain specific terms like 'ER', 'Emergency room', 'Emergency department', or 'impression'
 # These rows likely refer to emergency settings and shouldn't be in the text for further analysis
+
 mask = df["HPI"].str.contains(' ER ', case=False, na=False)
 df = df[~mask]
 mask = df["HPI"].str.contains('Emergency room', case=False, na=False)
@@ -347,10 +307,9 @@ df = df[~mask]
 # This ensures that diagnosis-related fields don't inadvertently contain HPI-related content
 mask_hpi = df["diagnosis"].str.contains('history of present illness', case=False, na=False)
 df = df[~mask_hpi]
-print(len(df))
 
-
-## CREATE PRIMARY AND SECONDARY DIAGNOSIS
+ 
+#### Create Primary and Secondary Diagnosis
 ## Drop rows that include "primary" as primary diagnosis but not surely in the beginning
 mask = df["diagnosis"].str.contains('primary', case=False, na=False)
 ind = df[mask].index.tolist()
@@ -358,7 +317,6 @@ mask2 = df['diagnosis'].str.contains(r'^\s*\nprimary', flags=re.IGNORECASE, rege
 ind2 = df[mask2].index.tolist()
 ind_drop = set(ind) - set(ind2)
 df = df[~df.index.isin(ind_drop)]
-
 
 ## Drop rows that include "secondary" as secondary diagnosis but not surely in the beginning
 mask = df["diagnosis"].str.contains('secondary', case=False, na=False)
@@ -368,10 +326,10 @@ ind2 = df[mask2].index.tolist()
 ind_drop = set(ind) - set(ind2)
 df = df[~df.index.isin(ind_drop)]
 
-
 ## Segregate Discharge Diagnosis into Primary and Secondary Categories with Post-Processing and Filtering 
 df["primary_diagnosis"] = None
 df["secondary_diagnosis"] = None
+
 ## divide discharge diagnosis into primary and secondary diangosis if possible
 for i in df.index:
     index = df["diagnosis"][i].lower().find('secondary')
@@ -383,11 +341,12 @@ for i in df.index:
         df.loc[i, "secondary_diagnosis"] = ""
 
 
-## Remove any text after "___ Condition:" 
+# Remove any text after "___ Condition:" 
 def delete_after_string(text):
     text = re.sub(re.compile(r"___ Condition:.*", re.IGNORECASE | re.DOTALL), "", text)
     return text
 df['primary_diagnosis'] = df['primary_diagnosis'].apply(delete_after_string)
+
 
 
 ## Filter rows in the DataFrame where 'primary_diagnosis' has fewer than 16 single newlines (less than 16 diagnoses)
@@ -400,11 +359,10 @@ newline_counts = df['primary_diagnosis'].apply(count_single_newlines).tolist()
 
 mask = [value < 16 for value in newline_counts]
 df = df[mask]
+df = df.drop(columns=['preprocessed_text'], inplace=False)
 
-df = df.drop(columns=['text', 'preprocessed_text', 'medication'], inplace=False)
-
-
-## convert primary and secondary diagnoses into a list of diagnoses for each patient
+ 
+#### Convert Primary and Secondary Diagnosis into a list of diagnoses for each patient
 ## replace colon without \n to colon with \n
 def colon_replacement(text):
 
@@ -447,9 +405,20 @@ liste = liste.apply(lambda lst: [remove_number_prefix(item) for item in lst])
 
 df["secondary_diagnosis"] = liste
 
-## Extract the first 2200 (goal is to predict 2000, 200 are in case rows need to be remove - see postprocessing and additional postprocessing)
-df = df[:2200]
 
+#### Extract the first 2200 (goal is to predict 2000, 200 are in case rows need to be remove - see postprocessing and additional postprocessing)
+df_small = df[:2200]
 
 ## save file
-df.to_csv('MIMIC-IV-Ext-Triage-Specialty-Diagnosis-Decision-Support.csv', index=False)
+df_small.to_csv('MIMIC-IV-Ext-Triage-Specialty-Diagnosis-Decision-Support.csv', index=False)
+
+## Cleaning and organizing the DataFrame for clarity
+
+df_vital_signs =  df[['stay_id', 'subject_id', 'hadm_id', 'initial_vitals']]
+df_patient_demographics = df[['stay_id', 'patient_info']]
+df_diagnosis = df[['stay_id', 'HPI', 'patient_info', 'initial_vitals', 'diagnosis', 'primary_diagnosis', 'secondary_diagnosis']]
+df_triage = df[['stay_id', 'HPI', 'patient_info', 'initial_vitals', 'triage']]
+df_initial_assessment_info = df[['stay_id', 'triage', 'pain', 'chiefcomplaint', 'arrival_transport', 'disposition', 'icd_code', 'icd_title', 'icd_version']]
+df_clinical_data = df[['stay_id', 'text', 'HPI', 'tests', 'past_medication', 'diagnosis', 'primary_diagnosis', 'secondary_diagnosis']]
+
+
