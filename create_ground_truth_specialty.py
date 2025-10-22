@@ -15,7 +15,7 @@ BASE_URL = "http://localhost:1234/v1"  # LM Studio uses whatever model you loade
 ## Test LM Studio connection
 print("Testing local LLM connection...")
 if not test_local_llm_connection(BASE_URL):
-    print("\n⚠️  Please start LM Studio server before running this script.")
+    print("\nWARNING: Please start LM Studio server before running this script.")
     exit(1)
 
 ## Load Data from mimic_iv_preprocessing.py
@@ -89,5 +89,5 @@ df_triage  = df_triage.drop(columns=["subject_id", "hadm_id", "pain", "chiefcomp
 df_diag_spec.to_csv('MIMIC-IV-Ext-Diagnosis-Specialty.csv', index=False)
 df_triage.to_csv('MIMIC-IV-Ext-Triage.csv', index=False)
 
-print(f"\n✅ Ground truth specialties generated and datasets saved")
+print(f"\nGround truth specialties generated and datasets saved")
 

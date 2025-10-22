@@ -87,7 +87,7 @@ def create_local_chain(prompt_template, base_url="http://localhost:1234/v1"):
 
 
 # ============================================================================
-# Prediction Functions (Local LLM)
+# Prediction Functions 
 # ============================================================================
 
 def get_ground_truth_specialty(row, chain, max_retries=3, initial_wait=1):
@@ -100,7 +100,7 @@ def get_ground_truth_specialty(row, chain, max_retries=3, initial_wait=1):
             return specialty
         except Exception as e:
             wait_time = initial_wait * (2 ** attempt)
-            print(f"⚠️  Error (attempt {attempt + 1}/{max_retries}): {e}")
+            print(f"WARNING: Error (attempt {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
                 print(f"   Retrying in {wait_time}s...")
                 time.sleep(wait_time)
@@ -119,7 +119,7 @@ def get_prediction_GeneralUser(row, chain, max_retries=3, initial_wait=1):
             return response
         except Exception as e:
             wait_time = initial_wait * (2 ** attempt)
-            print(f"⚠️  Error (attempt {attempt + 1}/{max_retries}): {e}")
+            print(f"WARNING: Error (attempt {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
                 print(f"   Retrying in {wait_time}s...")
                 time.sleep(wait_time)
@@ -143,7 +143,7 @@ def get_prediction_ClinicalUser(row, chain, max_retries=3, initial_wait=1):
             return response
         except Exception as e:
             wait_time = initial_wait * (2 ** attempt)
-            print(f"⚠️  Error (attempt {attempt + 1}/{max_retries}): {e}")
+            print(f"WARNING: Error (attempt {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
                 print(f"   Retrying in {wait_time}s...")
                 time.sleep(wait_time)
@@ -170,7 +170,7 @@ def get_evaluation_diagnosis(row, key, chain, max_retries=3, initial_wait=1):
             return evaluation
         except Exception as e:
             wait_time = initial_wait * (2 ** attempt)
-            print(f"⚠️  Error (attempt {attempt + 1}/{max_retries}): {e}")
+            print(f"WARNING: Error (attempt {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
                 print(f"   Retrying in {wait_time}s...")
                 time.sleep(wait_time)
@@ -197,11 +197,11 @@ def test_local_llm_connection(base_url="http://localhost:1234/v1"):
     try:
         llm = LocalLLM(base_url=base_url)
         response = llm.invoke("Say hello")
-        print(f"✅ Local LLM connected: {response.content[:50]}...")
+        print(f"Local LLM connected: {response.content[:50]}...")
         return True
     except Exception as e:
-        print(f"❌ Local LLM connection failed: {e}")
-        print(f"\n💡 Troubleshooting:")
+        print(f"ERROR: Local LLM connection failed: {e}")
+        print(f"\nTroubleshooting:")
         print(f"   1. Open LM Studio")
         print(f"   2. Load a model (e.g., MedGemma-4B-IT, Llama-3.1-8B)")
         print(f"   3. Go to 'Local Server' tab")

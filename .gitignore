@@ -46,25 +46,13 @@ medllm/
 *~
 .DS_Store
 
-# AWS Credentials (if accidentally added)
-.aws/
-*credentials*
-*secrets*
-
-# Data files (large datasets)
+# Data files
 *.csv
 !*_schema.csv
 *.xlsx
 *.h5
 *.hdf5
 *.parquet
-
-# Model files (if downloaded locally)
-*.bin
-*.pt
-*.pth
-*.onnx
-*.safetensors
 
 # Logs and output
 *.log

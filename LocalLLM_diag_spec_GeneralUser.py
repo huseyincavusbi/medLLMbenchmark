@@ -15,7 +15,7 @@ BASE_URL = "http://localhost:1234/v1"  # LM Studio uses whatever model you loade
 ## Test LM Studio connection
 print("Testing local LLM connection...")
 if not test_local_llm_connection(BASE_URL):
-    print("\n⚠️  Please start LM Studio server before running this script.")
+    print("\nWARNING: Please start LM Studio server before running this script.")
     exit(1)
 
 ## Load Data from create_ground_truth_specialty.py
@@ -38,5 +38,5 @@ tqdm.pandas()
 df['diag_spec_prediction'] = df.progress_apply(lambda row: get_prediction_GeneralUser(row, chain_local), axis=1)
 df.to_csv('MIMIC-IV-Ext-Diagnosis-Specialty.csv', index=False)
 
-print("\n✅ Predictions saved to MIMIC-IV-Ext-Diagnosis-Specialty.csv")
+print("\nPredictions saved to MIMIC-IV-Ext-Diagnosis-Specialty.csv")
 
