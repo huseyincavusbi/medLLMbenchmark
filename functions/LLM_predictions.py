@@ -71,18 +71,19 @@ class LocalChain:
         return self.llm.invoke(prompt)
 
 
-def create_local_chain(prompt_template, base_url="http://localhost:1234/v1"):
+def create_local_chain(prompt_template, base_url="http://localhost:1234/v1", model_name="local-model"):
     """
     Create a local LLM chain compatible with existing code
     
     Args:
         prompt_template: String with {variable} placeholders
         base_url: LM Studio server URL
+        model_name: Model identifier in LM Studio
         
     Returns:
         LocalChain object with .invoke() method
     """
-    llm = LocalLLM(base_url=base_url)
+    llm = LocalLLM(base_url=base_url, model_name=model_name)
     return LocalChain(prompt_template, llm)
 
 
@@ -182,7 +183,7 @@ def get_evaluation_diagnosis(row, key, chain, max_retries=3, initial_wait=1):
 # Utility Functions
 # ============================================================================
 
-def test_local_llm_connection(base_url="http://localhost:1234/v1"):
+def test_local_llm_connection(base_url="http://localhost:1234/v1", model_name="local-model"):
     """
     Test if LM Studio is running and responding.
     
@@ -195,7 +196,7 @@ def test_local_llm_connection(base_url="http://localhost:1234/v1"):
         True if connection successful, False otherwise
     """
     try:
-        llm = LocalLLM(base_url=base_url)
+        llm = LocalLLM(base_url=base_url, model_name=model_name)
         response = llm.invoke("Say hello")
         print(f"Local LLM connected: {response.content[:50]}...")
         return True
@@ -207,4 +208,5 @@ def test_local_llm_connection(base_url="http://localhost:1234/v1"):
         print(f"   3. Go to 'Local Server' tab")
         print(f"   4. Click 'Start Server'")
         print(f"   5. Verify server is running at: {base_url}")
+        print(f"   6. Make sure model name matches: {model_name}")
         return False
