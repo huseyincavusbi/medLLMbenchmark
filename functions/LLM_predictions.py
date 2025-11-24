@@ -25,7 +25,7 @@ class GPUModel:
     """
     GPU-based LLM using HuggingFace Transformers with quantization support.
     """
-    def __init__(self, model_path, quantization="4bit", device="cuda"):
+    def __init__(self, model_path, quantization=None, device="auto"):
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA not available! GPU required for inference.")
         
