@@ -1,21 +1,21 @@
 ## LLM TO CREATE GROUND TRUTH FOR SPECIALTY AND MERGE IT INTO THE DATASET
-## Using Local LLM via LM Studio
+## Using GPU inference with HuggingFace Transformers
 
 ## Import libraries
 import pandas as pd
 from tqdm import tqdm
 
 ## Import function
-from functions.LLM_predictions import get_ground_truth_specialty, create_local_chain, test_local_llm_connection
+from functions.LLM_predictions import get_ground_truth_specialty, create_chain, test_gpu_connection
 
 
 ## Configuration
-BASE_URL = "http://localhost:1234/v1"  # LM Studio uses whatever model you loaded
+MODEL_PATH = "./models/medgemma-27b-it"  # Path to downloaded model
 
-## Test LM Studio connection
-print("Testing local LLM connection...")
-if not test_local_llm_connection(BASE_URL):
-    print("\nWARNING: Please start LM Studio server before running this script.")
+## Test GPU connection
+print("Testing GPU connection and model loading...")
+if not test_gpu_connection(MODEL_PATH):
+    print("\nERROR: GPU not available or model failed to load.")
     exit(1)
 
 ## Load Data from mimic_iv_preprocessing.py
@@ -35,12 +35,12 @@ prompt = """You are an experienced healthcare professional with expertise in med
 Diagnosis: {diagnosis}."""
 
 
-## Create local LLM chain
-chain_local = create_local_chain(prompt, base_url=BASE_URL)
+## Create GPU chain
+chain_local = create_chain(prompt, model_path=MODEL_PATH)
 
 
 ## Run LLM to retrieve ground truth specialties
-print("\nGenerating ground truth specialties with local LLM...")
+print("\nGenerating ground truth specialties with GPU model...")
 tqdm.pandas()
 unique_diagnosis["specialty_primary_diagnosis"] = unique_diagnosis.progress_apply(lambda row: get_ground_truth_specialty(row, chain_local), axis=1)
 

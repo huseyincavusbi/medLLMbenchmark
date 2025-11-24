@@ -1,21 +1,21 @@
 ## PREDICT SPECIALTY AND DIAGNOSIS GENERAL USER CASE
-## Using Local LLM via LM Studio
+## Using GPU inference with HuggingFace Transformers
 
 ## Import libraries
 import pandas as pd
 from tqdm import tqdm
 
 ## Import Functions
-from functions.LLM_predictions import get_prediction_GeneralUser, create_local_chain, test_local_llm_connection
+from functions.LLM_predictions import get_prediction_GeneralUser, create_chain, test_gpu_connection
 
 
 ## Configuration
-BASE_URL = "http://localhost:1234/v1"  # LM Studio uses whatever model you loaded
+MODEL_PATH = "./models/medgemma-27b-it"  # Path to downloaded model
 
-## Test LM Studio connection
-print("Testing local LLM connection...")
-if not test_local_llm_connection(BASE_URL):
-    print("\nWARNING: Please start LM Studio server before running this script.")
+## Test GPU connection
+print("Testing GPU connection and model loading...")
+if not test_gpu_connection(MODEL_PATH):
+    print("\nERROR: GPU not available or model failed to load.")
     exit(1)
 
 ## Load Data from create_ground_truth_specialty.py
@@ -28,12 +28,12 @@ Respond with the specialties in <specialty> tags and the diagnoses in <diagnosis
 History of present illness: {hpi} and personal information: {patient_info}."""
 
 
-## Create local LLM chain
-chain_local = create_local_chain(prompt, base_url=BASE_URL)
+## Create GPU chain
+chain_local = create_chain(prompt, model_path=MODEL_PATH)
 
 
 ## Run predictions
-print("\nRunning diagnosis/specialty predictions with local LLM...")
+print("\nRunning diagnosis/specialty predictions with GPU model...")
 tqdm.pandas()
 df['diag_spec_prediction'] = df.progress_apply(lambda row: get_prediction_GeneralUser(row, chain_local), axis=1)
 df.to_csv('MIMIC-IV-Ext-Diagnosis-Specialty.csv', index=False)
