@@ -15,9 +15,9 @@ Usage:
     
 Options:
     --test          Run on 10 test cases only (fast testing)
-    --model-name    Name of the model for results tracking (default: auto-detect)
+    --model-name    Name of the model for results tracking (default: medgemma-27b-it)
+    --model-path    Path to model directory (default: ./models/medgemma-27b-it)
     --num-cases     Number of cases to run (default: all available)
-    --base-url      LM Studio server URL (default: http://localhost:1234/v1)
 """
 
 import sys
@@ -35,8 +35,8 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from functions.LLM_predictions import (
-    create_local_chain,
-    test_local_llm_connection,
+    create_chain,
+    test_gpu_connection,
     get_prediction_GeneralUser,
     get_prediction_ClinicalUser
 )
@@ -45,10 +45,10 @@ from functions.LLM_predictions import (
 class BenchmarkRunner:
     """Orchestrates benchmark execution and result tracking"""
     
-    def __init__(self, base_url="http://localhost:1234/v1", model_name=None, 
+    def __init__(self, model_path="./models/medgemma-27b-it", model_name=None, 
                  num_cases=None, test_mode=False):
-        self.base_url = base_url
-        self.model_name = model_name or "local-model"
+        self.model_path = model_path
+        self.model_name = model_name or "medgemma-27b-it"
         self.num_cases = num_cases
         self.test_mode = test_mode
         self.results_dir = Path(__file__).parent / "results"
@@ -63,26 +63,25 @@ class BenchmarkRunner:
         self.run_id = f"{self.model_name}_{self.timestamp}"
         
     def test_connection(self):
-        """Test LM Studio connection"""
+        """Test GPU connection"""
         print("=" * 70)
-        print("MIMIC-IV-Ext Benchmark - Local LLM Evaluation")
+        print("MIMIC-IV-Ext Benchmark - GPU Inference (Full Precision)")
         print("=" * 70)
         print(f"\nModel: {self.model_name}")
-        print(f"Server: {self.base_url}")
+        print(f"Model Path: {self.model_path}")
         print(f"Test Mode: {self.test_mode}")
         if self.num_cases:
             print(f"Cases to run: {self.num_cases}")
         print()
         
-        print("Testing LM Studio connection...")
-        if not test_local_llm_connection(self.base_url, self.model_name):
-            print("\nERROR: Cannot connect to LM Studio")
-            print("\nPlease:")
-            print("  1. Open LM Studio")
-            print("  2. Load a model")
-            print("  3. Start the local server")
-            print(f"  4. Verify server is running at {self.base_url}")
-            print(f"  5. Make sure model is loaded: {self.model_name}")
+        print("Testing GPU connection and model loading...")
+        if not test_gpu_connection(self.model_path):
+            print("\nERROR: Cannot load model on GPU")
+            print("\nPlease verify:")
+            print("  1. GPU is available (nvidia-smi)")
+            print("  2. Model is downloaded")
+            print(f"  3. Model path is correct: {self.model_path}")
+            print("  4. Sufficient GPU memory available")
             return False
         
         print("Connection successful!\n")
@@ -141,7 +140,7 @@ class BenchmarkRunner:
 History of present illness: {HPI}, patient info: {patient_info}. Respond with the level in an <acuity> tag."""
         
         # Create chain
-        chain = create_local_chain(prompt, base_url=self.base_url, model_name=self.model_name)
+        chain = create_chain(prompt, model_path=self.model_path, quantization=self.quantization)
         
         # Run predictions
         start_time = time.time()
@@ -196,7 +195,7 @@ History of present illness: {HPI}, patient info: {patient_info}. Respond with th
 History of present illness: {HPI}, patient info: {patient_info} and initial vitals: {initial_vitals}. Respond with the level in an <acuity> tag."""
         
         # Create chain
-        chain = create_local_chain(prompt, base_url=self.base_url, model_name=self.model_name)
+        chain = create_chain(prompt, model_path=self.model_path, quantization=self.quantization)
         
         # Run predictions
         start_time = time.time()
@@ -265,7 +264,7 @@ History of present illness: {HPI}
 Personal information: {patient_info}"""
         
         # Create chain
-        chain = create_local_chain(prompt, base_url=self.base_url, model_name=self.model_name)
+        chain = create_chain(prompt, model_path=self.model_path, quantization=self.quantization)
         
         # Run predictions
         start_time = time.time()
@@ -335,7 +334,7 @@ Personal information: {patient_info}
 Initial vitals: {initial_vitals}"""
         
         # Create chain
-        chain = create_local_chain(prompt, base_url=self.base_url, model_name=self.model_name)
+        chain = create_chain(prompt, model_path=self.model_path)
         
         # Run predictions
         start_time = time.time()
@@ -434,9 +433,10 @@ Initial vitals: {initial_vitals}"""
         print(f"\nMetadata saved: {metadata_file}")
 
 
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Run MIMIC-IV-Ext benchmark with local LLM"
+        description="Run MIMIC-IV-Ext benchmark with GPU inference"
     )
     parser.add_argument(
         '--test',
@@ -447,7 +447,13 @@ def main():
         '--model-name',
         type=str,
         default=None,
-        help='Model name for tracking results (default: auto-detect)'
+        help='Model name for tracking results (default: medgemma-27b-it)'
+    )
+    parser.add_argument(
+        '--model-path',
+        type=str,
+        default='./models/medgemma-27b-it',
+        help='Path to model directory (default: ./models/medgemma-27b-it)'
     )
     parser.add_argument(
         '--num-cases',
@@ -455,18 +461,12 @@ def main():
         default=None,
         help='Number of cases to run (default: all available)'
     )
-    parser.add_argument(
-        '--base-url',
-        type=str,
-        default='http://localhost:1234/v1',
-        help='LM Studio server URL (default: http://localhost:1234/v1)'
-    )
     
     args = parser.parse_args()
     
     # Create and run benchmark
     runner = BenchmarkRunner(
-        base_url=args.base_url,
+        model_path=args.model_path,
         model_name=args.model_name,
         num_cases=args.num_cases,
         test_mode=args.test
@@ -489,3 +489,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

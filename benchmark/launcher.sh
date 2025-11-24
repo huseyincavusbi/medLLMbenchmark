@@ -17,7 +17,7 @@ NC='\033[0m' # No Color
 # Banner
 echo ""
 echo "======================================================================"
-echo "  MIMIC-IV-Ext Benchmark Suite"
+echo "  MIMIC-IV-Ext Benchmark Suite - GPU Inference"
 echo "======================================================================"
 echo ""
 
@@ -31,8 +31,8 @@ fi
 show_menu() {
     echo -e "${BLUE}Select an option:${NC}"
     echo ""
-    echo "  1) Quick Test (10 cases, ~2 minutes)"
-    echo "  2) Run Full Benchmark (all cases, 8-10 hours)"
+    echo "  1) Quick Test (10 cases)"
+    echo "  2) Run Full Benchmark (all cases)"
     echo "  3) Run Subset (specify number of cases)"
     echo "  4) Evaluate Latest Results"
     echo "  5) Evaluate Specific Run"
@@ -45,10 +45,13 @@ show_menu() {
 # Function to run quick test
 quick_test() {
     echo -e "${GREEN}Running quick test (10 cases)...${NC}"
-    read -p "Model name (default: local-model): " model_name
-    model_name=${model_name:-local-model}
+    read -p "Model name (default: medgemma-27b-it): " model_name
+    model_name=${model_name:-medgemma-27b-it}
     
-    python3 run_benchmark.py --test --model-name "$model_name"
+    read -p "Model path (default: ./models/medgemma-27b-it): " model_path
+    model_path=${model_path:-./models/medgemma-27b-it}
+    
+    python3 run_benchmark.py --test --model-name "$model_name" --model-path "$model_path"
     
     if [ $? -eq 0 ]; then
         echo ""
@@ -61,7 +64,7 @@ quick_test() {
 
 # Function to run full benchmark
 full_benchmark() {
-    echo -e "${YELLOW}WARNING: This will take 8-10 hours!${NC}"
+    echo -e "${YELLOW}WARNING: This will process all cases (may take many hours)!${NC}"
     read -p "Are you sure? (y/n): " confirm
     
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
@@ -69,15 +72,18 @@ full_benchmark() {
         return
     fi
     
-    read -p "Model name (default: local-model): " model_name
-    model_name=${model_name:-local-model}
+    read -p "Model name (default: medgemma-27b-it): " model_name
+    model_name=${model_name:-medgemma-27b-it}
+    
+    read -p "Model path (default: ./models/medgemma-27b-it): " model_path
+    model_path=${model_path:-./models/medgemma-27b-it}
     
     echo -e "${GREEN}Starting full benchmark...${NC}"
-    python3 run_benchmark.py --model-name "$model_name"
+    python3 run_benchmark.py --model-name "$model_name" --model-path "$model_path"
     
     if [ $? -eq 0 ]; then
         echo ""
-        echo -e "${GREEN}✅ Benchmark completed!${NC}"
+        echo -e "${GREEN}Benchmark completed!${NC}"
         read -p "Evaluate results now? (y/n): " evaluate
         if [[ "$evaluate" == "y" || "$evaluate" == "Y" ]]; then
             python3 evaluate_results.py --latest
@@ -94,11 +100,14 @@ subset_benchmark() {
         return
     fi
     
-    read -p "Model name (default: local-model): " model_name
-    model_name=${model_name:-local-model}
+    read -p "Model name (default: medgemma-27b-it): " model_name
+    model_name=${model_name:-medgemma-27b-it}
+    
+    read -p "Model path (default: ./models/medgemma-27b-it): " model_path
+    model_path=${model_path:-./models/medgemma-27b-it}
     
     echo -e "${GREEN}Running benchmark on $num_cases cases...${NC}"
-    python3 run_benchmark.py --num-cases "$num_cases" --model-name "$model_name"
+    python3 run_benchmark.py --num-cases "$num_cases" --model-name "$model_name" --model-path "$model_path"
     
     if [ $? -eq 0 ]; then
         echo ""
