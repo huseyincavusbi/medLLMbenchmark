@@ -1,5 +1,5 @@
 ## LLM TO EVALUATE DIAGNOSIS PREDICTION
-## Using Local LLM via LM Studio
+## Using GPU inference with HuggingFace Transformers
 ## Updated to work with benchmark results
 
 ## Import libraries
@@ -9,20 +9,20 @@ import re
 from pathlib import Path
 
 ## Import Functions
-from functions.LLM_predictions import get_evaluation_diagnosis, create_local_chain, test_local_llm_connection
+from functions.LLM_predictions import get_evaluation_diagnosis, create_chain, test_gpu_connection
 
 
 ## Configuration
-BASE_URL = "http://localhost:1234/v1"  # LM Studio uses whatever model you loaded
-MODEL_NAME = "medgemma-4b-it-mlx"  # Model being evaluated
+MODEL_PATH = "./models/medgemma-4b-it"  # Judge model (smaller for evaluation)
+MODEL_NAME = "medgemma-4b-it"  # Model name for tracking
 
-## Test LM Studio connection
-print("Testing local LLM connection...")
-if not test_local_llm_connection(BASE_URL, model_name=MODEL_NAME):
-    print("\nWARNING: Please start LM Studio server before running this script.")
+## Test GPU connection
+print("Testing GPU connection and model loading...")
+if not test_gpu_connection(MODEL_PATH):
+    print("\nERROR: GPU not available or model failed to load.")
     exit(1)
 
-print(f"✅ Connected to {MODEL_NAME}")
+print(f"[OK] Connected to {MODEL_NAME}")
 
 ## Find benchmark result files
 results_dir = Path("benchmark/results")
@@ -138,9 +138,9 @@ Does the predicted diagnosis match the real diagnosis (same meaning or broader c
 Answer: """
 
 
-## Create local LLM chain
+## Create GPU chain
 print("\nCreating LLM evaluation chain...")
-chain_local = create_local_chain(prompt, base_url=BASE_URL, model_name=MODEL_NAME)
+chain_local = create_chain(prompt, model_path=MODEL_PATH)
 
 
 ## Run evaluation
