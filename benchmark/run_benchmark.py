@@ -46,13 +46,20 @@ class BenchmarkRunner:
     """Orchestrates benchmark execution and result tracking"""
     
     def __init__(self, model_path="./models/medgemma-27b-it", model_name=None, 
-                 num_cases=None, test_mode=False):
+                 num_cases=None, test_mode=False, quantization=None, judge_model_path=None, judge_quantization=None):
         self.model_path = model_path
         self.model_name = model_name or "medgemma-27b-it"
+        # quantization: None -> use bfloat16, '4bit' or '8bit' for quantized loading
+        self.quantization = quantization
+        # Optional judge model settings (local LLM-as-judge)
+        self.judge_model_path = judge_model_path
+        self.judge_quantization = judge_quantization
         self.num_cases = num_cases
         self.test_mode = test_mode
         self.results_dir = Path(__file__).parent / "results"
         self.results_dir.mkdir(exist_ok=True)
+        # Optional base URL for remote model or dataset references
+        self.base_url = None
         
         # Track timing and errors
         self.task_times = {}
@@ -65,7 +72,7 @@ class BenchmarkRunner:
     def test_connection(self):
         """Test GPU connection"""
         print("=" * 70)
-        print("MIMIC-IV-Ext Benchmark - GPU Inference (Full Precision)")
+        print("MIMIC-IV-Ext Benchmark - GPU Inference (bfloat16 default)")
         print("=" * 70)
         print(f"\nModel: {self.model_name}")
         print(f"Model Path: {self.model_path}")
@@ -75,8 +82,23 @@ class BenchmarkRunner:
         print()
         
         print("Testing GPU connection and model loading...")
-        if not test_gpu_connection(self.model_path):
-            print("\nERROR: Cannot load model on GPU")
+        # If a judge model is provided, try loading both models together
+        if self.judge_model_path:
+            from functions.LLM_predictions import DualModelManager
+            # Map quantization settings
+            pred_quant = self.quantization
+            judge_quant = self.judge_quantization
+            try:
+                self.dual_manager = DualModelManager(self.model_path, self.judge_model_path,
+                                                     predictor_quant=pred_quant, judge_quant=judge_quant)
+                print("Both predictor and judge models loaded successfully.")
+            except Exception as e:
+                print(f"\nERROR: Cannot load predictor+judge models on GPU: {e}")
+                print("\nPlease verify model paths and GPU memory")
+                return False
+        else:
+            if not test_gpu_connection(self.model_path):
+                print("\nERROR: Cannot load model on GPU")
             print("\nPlease verify:")
             print("  1. GPU is available (nvidia-smi)")
             print("  2. Model is downloaded")
@@ -456,20 +478,47 @@ def main():
         help='Path to model directory (default: ./models/medgemma-27b-it)'
     )
     parser.add_argument(
+        '--quantization',
+        type=str,
+        choices=['none','4bit','8bit'],
+        default='none',
+        help="Quantization mode: 'none'->bfloat16 (default), '4bit' or '8bit'"
+    )
+    parser.add_argument(
         '--num-cases',
         type=int,
         default=None,
         help='Number of cases to run (default: all available)'
     )
+    parser.add_argument(
+        '--judge-model-path',
+        type=str,
+        default=None,
+        help='Path to local judge model (e.g., ./models/medgemma-4b-it)'
+    )
+    parser.add_argument(
+        '--judge-quantization',
+        type=str,
+        choices=['none','4bit','8bit'],
+        default='none',
+        help="Judge quantization: 'none'->bfloat16 (default), '4bit' or '8bit'"
+    )
     
     args = parser.parse_args()
     
     # Create and run benchmark
+    # Map CLI quantization flag to internal value (None for bfloat16)
+    quant = None if args.quantization == 'none' else args.quantization
+    judge_quant = None if args.judge_quantization == 'none' else args.judge_quantization
+
     runner = BenchmarkRunner(
         model_path=args.model_path,
         model_name=args.model_name,
         num_cases=args.num_cases,
-        test_mode=args.test
+        test_mode=args.test,
+        quantization=quant,
+        judge_model_path=args.judge_model_path,
+        judge_quantization=judge_quant
     )
     
     results = runner.run_all_tasks()

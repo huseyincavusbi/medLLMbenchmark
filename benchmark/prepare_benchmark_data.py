@@ -13,7 +13,7 @@ from pathlib import Path
 import shutil
 
 # Paths
-DATA_DIR = Path(__file__).parent.parent / "physionet.org/files/mimic-iv-ext-cds/1.0.2"
+DATA_DIR = Path("/home/ubuntu/physionet.org/files/mimic-iv-ext-cds/1.0.2")
 OUTPUT_DIR = Path(__file__).parent
 
 print("=" * 70)

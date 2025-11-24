@@ -31,7 +31,16 @@ class GPUModel:
         
         self.model_path = model_path
         self.quantization = quantization
-        self.device = device
+        # device_map (string or dict) is passed to transformers; self.device is a torch.device
+        self.device_map = device
+        if device == "auto":
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            try:
+                self.device = torch.device(device)
+            except Exception:
+                # Fallback to cuda if parsing fails
+                self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # Extract model name from path for display
         import os
@@ -61,11 +70,39 @@ class GPUModel:
         else:
             quant_config = None
         
-        # Load tokenizer
+        # Load tokenizer (some Gemma models require remote code for tokenizer)
         print("Loading tokenizer...")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+        except Exception as e:
+            print(f"AutoTokenizer failed ({e}), attempting fallback using PreTrainedTokenizerFast from tokenizer.json")
+            from transformers import PreTrainedTokenizerFast
+            import json, os
+            # Try to read special tokens from special_tokens_map.json
+            st_path = os.path.join(model_path, 'special_tokens_map.json')
+            specials = {}
+            try:
+                with open(st_path, 'r') as f:
+                    specials = json.load(f)
+            except Exception:
+                specials = {}
+
+            def _tok_val(key, default):
+                v = specials.get(key, default)
+                if isinstance(v, str):
+                    return v
+                if isinstance(v, dict):
+                    return v.get('content', default)
+                return default
+
+            tokenizer_file = os.path.join(model_path, 'tokenizer.json')
+            self.tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file,
+                                                     bos_token=_tok_val('bos_token', '<bos>'),
+                                                     eos_token=_tok_val('eos_token', '<eos>'),
+                                                     pad_token=_tok_val('pad_token', '<pad>'),
+                                                     unk_token=_tok_val('unk_token', '<unk>'))
         
         # Load model
         print("Loading model (this may take 1-3 minutes)...")
@@ -280,8 +317,9 @@ def test_gpu_connection(model_path):
         print(f"GPU detected: {gpu_name} ({gpu_mem:.1f}GB)")
         print(f"Testing model loading from: {model_path}")
         
-        # Try loading model
-        model = GPUModel(model_path, quantization="4bit")
+        # Try loading model in bfloat16 (no quantization) to preserve numerical fidelity
+        # and avoid potential tokenizer/model-code mismatch with quantized configs.
+        model = GPUModel(model_path, quantization=None)
         response = model.invoke("Say hello")
         print(f"Model response: {response.content[:50]}...")
         
