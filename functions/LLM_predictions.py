@@ -11,11 +11,18 @@ Usage:
     1. Load models on GPU (e.g., MedGemma-27B-IT, MedGemma-4B-IT)
     2. Use create_chain() to create prediction chains
     3. Run predictions with get_prediction_* functions
+
+Environment:
+    Set HF_TOKEN environment variable for gated models (e.g., MedGemma)
 """
 
+import os
 import time
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+# Get HuggingFace token from environment for gated models
+HF_TOKEN = os.environ.get("HF_TOKEN", None)
 
 # ============================================================================
 # GPU Model Classes
@@ -73,7 +80,7 @@ class GPUModel:
         # Load tokenizer (some Gemma models require remote code for tokenizer)
         print("Loading tokenizer...")
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+            self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, token=HF_TOKEN)
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
         except Exception as e:
@@ -114,7 +121,8 @@ class GPUModel:
             device_map=device,
             torch_dtype=torch.bfloat16 if quant_config is None else None,
             low_cpu_mem_usage=True,
-            trust_remote_code=True
+            trust_remote_code=True,
+            token=HF_TOKEN
         )
         self.model.eval()
         

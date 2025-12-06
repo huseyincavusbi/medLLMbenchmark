@@ -99,12 +99,12 @@ class BenchmarkRunner:
         else:
             if not test_gpu_connection(self.model_path):
                 print("\nERROR: Cannot load model on GPU")
-            print("\nPlease verify:")
-            print("  1. GPU is available (nvidia-smi)")
-            print("  2. Model is downloaded")
-            print(f"  3. Model path is correct: {self.model_path}")
-            print("  4. Sufficient GPU memory available")
-            return False
+                print("\nPlease verify:")
+                print("  1. GPU is available (nvidia-smi)")
+                print("  2. Model is downloaded")
+                print(f"  3. Model path is correct: {self.model_path}")
+                print("  4. Sufficient GPU memory available")
+                return False
         
         print("Connection successful!\n")
         return True
