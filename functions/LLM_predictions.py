@@ -135,7 +135,7 @@ class GPUModel:
             print(f"[OK] Model loaded in {load_time:.1f}s")
             print(f"GPU Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved\n")
     
-    def invoke(self, inputs, max_tokens=500, temperature=0.0):
+    def invoke(self, inputs, max_tokens=2048, temperature=0.0):
         """Invoke GPU model with inputs"""
         # Format prompt from inputs
         if isinstance(inputs, dict):
@@ -161,6 +161,8 @@ class GPUModel:
                 max_new_tokens=max_tokens,
                 temperature=temperature if temperature > 0 else 1.0,
                 do_sample=temperature > 0,
+                repetition_penalty=1.1,  # Prevent token loops
+                no_repeat_ngram_size=3,  # Prevent phrase repetition
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id
             )
