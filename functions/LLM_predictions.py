@@ -151,7 +151,10 @@ class GPUModel:
             max_length=2048
         ).to(self.device)
         
-        # Generate
+        input_token_count = input_ids['input_ids'].shape[1]
+        
+        # Generate with timing
+        gen_start = time.time()
         with torch.no_grad():
             outputs = self.model.generate(
                 **input_ids,
@@ -161,17 +164,26 @@ class GPUModel:
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id
             )
+        gen_time = time.time() - gen_start
         
         # Decode (remove input prompt)
         generated_tokens = outputs[0][input_ids['input_ids'].shape[1]:]
+        output_token_count = len(generated_tokens)
         generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
         
-        # Return object mimicking LangChain response
-        class Response:
-            def __init__(self, content):
-                self.content = content
+        # Calculate tokens/second
+        tokens_per_sec = output_token_count / gen_time if gen_time > 0 else 0
         
-        return Response(generated_text.strip())
+        # Return object mimicking LangChain response with metrics
+        class Response:
+            def __init__(self, content, input_tokens, output_tokens, gen_time, tokens_per_sec):
+                self.content = content
+                self.input_tokens = input_tokens
+                self.output_tokens = output_tokens
+                self.gen_time = gen_time
+                self.tokens_per_sec = tokens_per_sec
+        
+        return Response(generated_text.strip(), input_token_count, output_token_count, gen_time, tokens_per_sec)
 
 
 class Chain:
@@ -233,8 +245,10 @@ def get_prediction_GeneralUser(row, chain, max_retries=3, initial_wait=1):
     attempt = 0
     while attempt < max_retries:
         try:
-            response = chain.invoke({"HPI": hpi, "patient_info": patient_info}).content
-            return response
+            response = chain.invoke({"HPI": hpi, "patient_info": patient_info})
+            # Print token metrics
+            print(f" [{response.output_tokens} tok, {response.tokens_per_sec:.1f} tok/s]", end="")
+            return response.content
         except Exception as e:
             wait_time = initial_wait * (2 ** attempt)
             print(f"WARNING: Error (attempt {attempt + 1}/{max_retries}): {e}")
@@ -257,8 +271,10 @@ def get_prediction_ClinicalUser(row, chain, max_retries=3, initial_wait=1):
                 "hpi": hpi, 
                 "patient_info": patient_info, 
                 "initial_vitals": initial_vitals
-            }).content
-            return response
+            })
+            # Print token metrics
+            print(f" [{response.output_tokens} tok, {response.tokens_per_sec:.1f} tok/s]", end="")
+            return response.content
         except Exception as e:
             wait_time = initial_wait * (2 ** attempt)
             print(f"WARNING: Error (attempt {attempt + 1}/{max_retries}): {e}")
