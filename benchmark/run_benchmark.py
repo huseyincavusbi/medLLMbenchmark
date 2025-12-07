@@ -54,7 +54,10 @@ class BenchmarkRunner:
                  num_cases=None, test_mode=False, quantization=None, 
                  judge_model_path=None, judge_quantization=None, backend="hf"):
         self.model_path = model_path
-        self.model_name = model_name or "medgemma-27b-it"
+        if model_name:
+            self.model_name = model_name
+        else:
+            self.model_name = Path(model_path).name
         # quantization: None -> use bfloat16, '4bit' or '8bit' for quantized loading
         self.quantization = quantization
         # Optional judge model settings (local LLM-as-judge)
@@ -519,13 +522,13 @@ def main():
         '--model-name',
         type=str,
         default=None,
-        help='Model name for tracking results (default: medgemma-27b-it)'
+        help='Model name for tracking results (default: inferred from model-path)'
     )
     parser.add_argument(
         '--model-path',
         type=str,
-        default='./models/medgemma-27b-it',
-        help='Path to model directory (default: ./models/medgemma-27b-it)'
+        required=True,
+        help='Path to model directory or HuggingFace repo ID'
     )
     parser.add_argument(
         '--quantization',
