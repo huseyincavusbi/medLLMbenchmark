@@ -40,13 +40,19 @@ from functions.LLM_predictions import (
     get_prediction_GeneralUser,
     get_prediction_ClinicalUser
 )
+from functions.backends import create_backend
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class BenchmarkRunner:
     """Orchestrates benchmark execution and result tracking"""
     
     def __init__(self, model_path="./models/medgemma-27b-it", model_name=None, 
-                 num_cases=None, test_mode=False, quantization=None, judge_model_path=None, judge_quantization=None):
+                 num_cases=None, test_mode=False, quantization=None, 
+                 judge_model_path=None, judge_quantization=None, backend="hf"):
         self.model_path = model_path
         self.model_name = model_name or "medgemma-27b-it"
         # quantization: None -> use bfloat16, '4bit' or '8bit' for quantized loading
@@ -61,6 +67,10 @@ class BenchmarkRunner:
         # Optional base URL for remote model or dataset references
         self.base_url = None
         
+        # Backend configuration ("hf" or "vllm")
+        self.backend_type = backend
+        self._backend = None  # Lazy-loaded backend instance
+        
         # Track timing and errors
         self.task_times = {}
         self.task_errors = {}
@@ -68,6 +78,13 @@ class BenchmarkRunner:
         # Create timestamp for this run
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.run_id = f"{self.model_name}_{self.timestamp}"
+    
+    def get_backend(self):
+        """Get or create the inference backend (lazy loading, single instance)"""
+        if self._backend is None:
+            print(f"\nInitializing {self.backend_type.upper()} backend...")
+            self._backend = create_backend(self.backend_type, self.model_path)
+        return self._backend
         
     def test_connection(self):
         """Test GPU connection"""
@@ -96,14 +113,29 @@ class BenchmarkRunner:
                 print(f"\nERROR: Cannot load predictor+judge models on GPU: {e}")
                 print("\nPlease verify model paths and GPU memory")
                 return False
+                return False
         else:
-            if not test_gpu_connection(self.model_path):
-                print("\nERROR: Cannot load model on GPU")
-                print("\nPlease verify:")
-                print("  1. GPU is available (nvidia-smi)")
-                print("  2. Model is downloaded")
-                print(f"  3. Model path is correct: {self.model_path}")
-                print("  4. Sufficient GPU memory available")
+            # Check according to backend
+            if self.backend_type == 'vllm':
+                try:
+                    # For vLLM, trying to initialize the backend serves as the connection test
+                    self.get_backend()
+                except Exception as e:
+                    print(f"\nERROR: Cannot initialize vLLM backend: {e}")
+                    print("\nPlease verify:")
+                    print(f"  1. Model access (HF_TOKEN set for gated models like {self.model_path})")
+                    print("  2. GPU is available and has sufficient memory")
+                    return False
+            else:
+                # Fallback to original test for HuggingFace backend
+                if not test_gpu_connection(self.model_path):
+                    print("\nERROR: Cannot load model on GPU")
+                    print("\nPlease verify:")
+                    print("  1. GPU is available (nvidia-smi)")
+                    print("  2. Model is downloaded or HF_TOKEN is set")
+                    print(f"  3. Model path is correct: {self.model_path}")
+                    print("  4. Sufficient GPU memory available")
+                    return False
                 return False
         
         print("Connection successful!\n")
@@ -111,24 +143,34 @@ class BenchmarkRunner:
     
     def load_data(self, task_name):
         """Load appropriate dataset for task"""
-        data_dir = Path(__file__).parent.parent
+        # Dataset is in ../dataset relative to the project root
+        project_root = Path(__file__).parent.parent
+        data_dir = project_root.parent / "dataset"
         
         # Determine which file to load
         if "triage" in task_name.lower():
-            csv_file = data_dir / "MIMIC-IV-Ext-Triage.csv"
+            csv_file = data_dir / "triage_level.csv"
         elif "diag" in task_name.lower() or "spec" in task_name.lower():
-            csv_file = data_dir / "MIMIC-IV-Ext-Diagnosis-Specialty.csv"
+            # For diagnosis/specialty, we need clinical_data merged with specialty
+            csv_file = data_dir / "clinical_data.csv"
         else:
             raise ValueError(f"Unknown task: {task_name}")
         
         if not csv_file.exists():
             print(f"Dataset not found: {csv_file}")
-            print("Please run data preparation scripts first:")
-            print("  1. MIMIC-IV-Ext-Creation.py")
-            print("  2. create_ground_truth_specialty.py")
+            print(f"Please ensure dataset files are in: {data_dir}")
             return None
         
         df = pd.read_csv(csv_file)
+        
+        # For diagnosis/specialty tasks, merge with demographics and vitals
+        if "diag" in task_name.lower() or "spec" in task_name.lower():
+            demo_file = data_dir / "patient_demographics.csv"
+            vitals_file = data_dir / "vital_signs.csv"
+            if demo_file.exists() and vitals_file.exists():
+                demo = pd.read_csv(demo_file)
+                vitals = pd.read_csv(vitals_file)[['stay_id', 'initial_vitals']]
+                df = df.merge(demo, on='stay_id', how='left').merge(vitals, on='stay_id', how='left')
         
         # Subset for test mode or num_cases
         if self.test_mode:
@@ -150,6 +192,7 @@ class BenchmarkRunner:
         print("=" * 70)
         print("Input: HPI + Demographics")
         print("Output: ESI level (1-5)")
+        print(f"Backend: {self.backend_type.upper()}")
         print()
         
         # Load data
@@ -157,31 +200,30 @@ class BenchmarkRunner:
         if df is None:
             return None
         
-        # Define prompt
-        prompt = """You are a nurse with emergency and triage experience. Using the patient's history of present illness and information, determine the triage level based on the Emergency Severity Index (ESI), ranging from ESI level 1 (highest acuity) to ESI level 5 (lowest acuity): 1: Assign if the patient requires immediate lifesaving intervention. 2: Assign if the patient is in a high-risk situation (e.g., confused, lethargic, disoriented, or experiencing severe pain/distress)  3: Assign if the patient requires two or more diagnostic or therapeutic interventions and their vital signs are within acceptable limits for non-urgent care. 4: Assign if the patient requires one diagnostic or therapeutic intervention (e.g., lab test, imaging, or EKG). 5: Assign if the patient does not require any diagnostic or therapeutic interventions beyond a physical exam (e.g., no labs, imaging, or wound care).
+        # Define prompt template
+        prompt_template = """You are a nurse with emergency and triage experience. Using the patient's history of present illness and information, determine the triage level based on the Emergency Severity Index (ESI), ranging from ESI level 1 (highest acuity) to ESI level 5 (lowest acuity): 1: Assign if the patient requires immediate lifesaving intervention. 2: Assign if the patient is in a high-risk situation (e.g., confused, lethargic, disoriented, or experiencing severe pain/distress)  3: Assign if the patient requires two or more diagnostic or therapeutic interventions and their vital signs are within acceptable limits for non-urgent care. 4: Assign if the patient requires one diagnostic or therapeutic intervention (e.g., lab test, imaging, or EKG). 5: Assign if the patient does not require any diagnostic or therapeutic interventions beyond a physical exam (e.g., no labs, imaging, or wound care).
 History of present illness: {HPI}, patient info: {patient_info}. Respond with the level in an <acuity> tag."""
         
-        # Create chain
-        chain = create_chain(prompt, model_path=self.model_path, quantization=self.quantization)
+        # Format all prompts
+        prompts = []
+        for _, row in df.iterrows():
+            prompt = prompt_template.format(HPI=row['HPI'], patient_info=row['patient_info'])
+            prompts.append(prompt)
         
-        # Run predictions
+        # Get backend and generate
+        backend = self.get_backend()
         start_time = time.time()
-        errors = 0
         
-        print("Running predictions...")
-        tqdm.pandas()
+        print(f"Generating {len(prompts)} predictions...")
+        try:
+            responses = backend.generate_batch(prompts, max_tokens=512)
+            errors = 0
+        except Exception as e:
+            print(f"ERROR: Batch generation failed: {e}")
+            responses = [f"ERROR: {str(e)}"] * len(prompts)
+            errors = len(prompts)
         
-        def predict_with_error_tracking(row):
-            try:
-                return get_prediction_GeneralUser(row, chain)
-            except Exception as e:
-                nonlocal errors
-                errors += 1
-                return f"ERROR: {str(e)}"
-        
-        df[f'triage_{self.model_name}_general'] = df.progress_apply(
-            predict_with_error_tracking, axis=1
-        )
+        df[f'triage_{self.model_name}_general'] = responses
         
         elapsed = time.time() - start_time
         self.task_times[task_name] = elapsed
@@ -205,6 +247,7 @@ History of present illness: {HPI}, patient info: {patient_info}. Respond with th
         print("=" * 70)
         print("Input: HPI + Demographics + Vital Signs")
         print("Output: ESI level (1-5)")
+        print(f"Backend: {self.backend_type.upper()}")
         print()
         
         # Load data
@@ -212,31 +255,34 @@ History of present illness: {HPI}, patient info: {patient_info}. Respond with th
         if df is None:
             return None
         
-        # Define prompt
-        prompt = """You are a nurse with emergency and triage experience. Using the patient's history of present illness, his information and initial vitals, determine the triage level based on the Emergency Severity Index (ESI), ranging from ESI level 1 (highest acuity) to ESI level 5 (lowest acuity): 1: Assign if the patient requires immediate lifesaving intervention. 2: Assign if the patient is in a high-risk situation (e.g., confused, lethargic, disoriented, or experiencing severe pain/distress)  3: Assign if the patient requires two or more diagnostic or therapeutic interventions and their vital signs are within acceptable limits for non-urgent care. 4: Assign if the patient requires one diagnostic or therapeutic intervention (e.g., lab test, imaging, or EKG). 5: Assign if the patient does not require any diagnostic or therapeutic interventions beyond a physical exam (e.g., no labs, imaging, or wound care).
+        # Define prompt template
+        prompt_template = """You are a nurse with emergency and triage experience. Using the patient's history of present illness, his information and initial vitals, determine the triage level based on the Emergency Severity Index (ESI), ranging from ESI level 1 (highest acuity) to ESI level 5 (lowest acuity): 1: Assign if the patient requires immediate lifesaving intervention. 2: Assign if the patient is in a high-risk situation (e.g., confused, lethargic, disoriented, or experiencing severe pain/distress)  3: Assign if the patient requires two or more diagnostic or therapeutic interventions and their vital signs are within acceptable limits for non-urgent care. 4: Assign if the patient requires one diagnostic or therapeutic intervention (e.g., lab test, imaging, or EKG). 5: Assign if the patient does not require any diagnostic or therapeutic interventions beyond a physical exam (e.g., no labs, imaging, or wound care).
 History of present illness: {hpi}, patient info: {patient_info} and initial vitals: {initial_vitals}. Respond with the level in an <acuity> tag."""
         
-        # Create chain
-        chain = create_chain(prompt, model_path=self.model_path, quantization=self.quantization)
+        # Format all prompts
+        prompts = []
+        for _, row in df.iterrows():
+            prompt = prompt_template.format(
+                hpi=row['HPI'], 
+                patient_info=row['patient_info'],
+                initial_vitals=row['initial_vitals']
+            )
+            prompts.append(prompt)
         
-        # Run predictions
+        # Get backend and generate
+        backend = self.get_backend()
         start_time = time.time()
-        errors = 0
         
-        print("Running predictions...")
-        tqdm.pandas()
+        print(f"Generating {len(prompts)} predictions...")
+        try:
+            responses = backend.generate_batch(prompts, max_tokens=512)
+            errors = 0
+        except Exception as e:
+            print(f"ERROR: Batch generation failed: {e}")
+            responses = [f"ERROR: {str(e)}"] * len(prompts)
+            errors = len(prompts)
         
-        def predict_with_error_tracking(row):
-            try:
-                return get_prediction_ClinicalUser(row, chain)
-            except Exception as e:
-                nonlocal errors
-                errors += 1
-                return f"ERROR: {str(e)}"
-        
-        df[f'triage_{self.model_name}_clinical'] = df.progress_apply(
-            predict_with_error_tracking, axis=1
-        )
+        df[f'triage_{self.model_name}_clinical'] = responses
         
         elapsed = time.time() - start_time
         self.task_times[task_name] = elapsed
@@ -260,6 +306,7 @@ History of present illness: {hpi}, patient info: {patient_info} and initial vita
         print("=" * 70)
         print("Input: HPI + Demographics")
         print("Output: Top 3 Specialties + Top 3 Diagnoses")
+        print(f"Backend: {self.backend_type.upper()}")
         print()
         
         # Load data
@@ -267,8 +314,8 @@ History of present illness: {hpi}, patient info: {patient_info} and initial vita
         if df is None:
             return None
         
-        # Define prompt
-        prompt = """You are an experienced healthcare professional with expertise in determining the medical specialty and diagnosis based on a patient's history of present illness and personal information.
+        # Define prompt template
+        prompt_template = """You are an experienced healthcare professional with expertise in determining the medical specialty and diagnosis based on a patient's history of present illness and personal information.
 
 Review the data and identify the three most likely, distinct specialties to manage the condition, followed by the three most likely diagnoses.
 
@@ -285,27 +332,26 @@ Do NOT include explanations, preambles, or any text outside the XML tags.
 History of present illness: {HPI}
 Personal information: {patient_info}"""
         
-        # Create chain
-        chain = create_chain(prompt, model_path=self.model_path, quantization=self.quantization)
+        # Format all prompts
+        prompts = []
+        for _, row in df.iterrows():
+            prompt = prompt_template.format(HPI=row['HPI'], patient_info=row['patient_info'])
+            prompts.append(prompt)
         
-        # Run predictions
+        # Get backend and generate
+        backend = self.get_backend()
         start_time = time.time()
-        errors = 0
         
-        print("Running predictions...")
-        tqdm.pandas()
+        print(f"Generating {len(prompts)} predictions...")
+        try:
+            responses = backend.generate_batch(prompts, max_tokens=512)
+            errors = 0
+        except Exception as e:
+            print(f"ERROR: Batch generation failed: {e}")
+            responses = [f"ERROR: {str(e)}"] * len(prompts)
+            errors = len(prompts)
         
-        def predict_with_error_tracking(row):
-            try:
-                return get_prediction_GeneralUser(row, chain)
-            except Exception as e:
-                nonlocal errors
-                errors += 1
-                return f"ERROR: {str(e)}"
-        
-        df[f'diag_spec_{self.model_name}_general'] = df.progress_apply(
-            predict_with_error_tracking, axis=1
-        )
+        df[f'diag_spec_{self.model_name}_general'] = responses
         
         elapsed = time.time() - start_time
         self.task_times[task_name] = elapsed
@@ -329,6 +375,7 @@ Personal information: {patient_info}"""
         print("=" * 70)
         print("Input: HPI + Demographics + Vital Signs")
         print("Output: Top 3 Specialties + Top 3 Diagnoses")
+        print(f"Backend: {self.backend_type.upper()}")
         print()
         
         # Load data
@@ -336,8 +383,8 @@ Personal information: {patient_info}"""
         if df is None:
             return None
         
-        # Define prompt
-        prompt = """You are an experienced healthcare professional with expertise in determining the medical specialty and diagnosis based on a patient's history of present illness, personal information and initial vitals.
+        # Define prompt template
+        prompt_template = """You are an experienced healthcare professional with expertise in determining the medical specialty and diagnosis based on a patient's history of present illness, personal information and initial vitals.
 
 Review the data and identify the three most likely, distinct specialties to manage the condition, followed by the three most likely diagnoses.
 
@@ -355,27 +402,30 @@ History of present illness: {hpi}
 Personal information: {patient_info}
 Initial vitals: {initial_vitals}"""
         
-        # Create chain
-        chain = create_chain(prompt, model_path=self.model_path)
+        # Format all prompts
+        prompts = []
+        for _, row in df.iterrows():
+            prompt = prompt_template.format(
+                hpi=row['HPI'],
+                patient_info=row['patient_info'],
+                initial_vitals=row['initial_vitals']
+            )
+            prompts.append(prompt)
         
-        # Run predictions
+        # Get backend and generate
+        backend = self.get_backend()
         start_time = time.time()
-        errors = 0
         
-        print("Running predictions...")
-        tqdm.pandas()
+        print(f"Generating {len(prompts)} predictions...")
+        try:
+            responses = backend.generate_batch(prompts, max_tokens=512)
+            errors = 0
+        except Exception as e:
+            print(f"ERROR: Batch generation failed: {e}")
+            responses = [f"ERROR: {str(e)}"] * len(prompts)
+            errors = len(prompts)
         
-        def predict_with_error_tracking(row):
-            try:
-                return get_prediction_ClinicalUser(row, chain)
-            except Exception as e:
-                nonlocal errors
-                errors += 1
-                return f"ERROR: {str(e)}"
-        
-        df[f'diag_spec_{self.model_name}_clinical'] = df.progress_apply(
-            predict_with_error_tracking, axis=1
-        )
+        df[f'diag_spec_{self.model_name}_clinical'] = responses
         
         elapsed = time.time() - start_time
         self.task_times[task_name] = elapsed
@@ -485,6 +535,13 @@ def main():
         help="Quantization mode: 'none'->bfloat16 (default), '4bit' or '8bit'"
     )
     parser.add_argument(
+        '--backend',
+        type=str,
+        choices=['hf', 'vllm'],
+        default='hf',
+        help="Inference backend: 'hf' (HuggingFace, sequential) or 'vllm' (batched, faster)"
+    )
+    parser.add_argument(
         '--num-cases',
         type=int,
         default=None,
@@ -518,7 +575,8 @@ def main():
         test_mode=args.test,
         quantization=quant,
         judge_model_path=args.judge_model_path,
-        judge_quantization=judge_quant
+        judge_quantization=judge_quant,
+        backend=args.backend
     )
     
     results = runner.run_all_tasks()
