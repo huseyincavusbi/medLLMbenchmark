@@ -1,142 +1,69 @@
 #!/usr/bin/env python3
 """
 LLM-as-Judge Evaluation for Diagnosis and Specialty Predictions
-Adapted to work with MedGemma-4B's flexible output formats
+Supports both HuggingFace and vLLM backends for local GPU execution.
 """
 
+import sys
+import argparse
 import pandas as pd
-import requests
 import re
-import json
-import time
-from tqdm import tqdm
 from pathlib import Path
+from tqdm import tqdm
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from functions.backends import create_backend
 
 
 class LLMJudge:
-    """Flexible LLM-as-judge that handles multiple output formats"""
+    """LLM-as-judge using local GPU backends (HuggingFace or vLLM)"""
     
-    def __init__(self, base_url="http://localhost:1234/v1", model_name="medgemma-4b-it-mlx"):
-        self.base_url = base_url
-        self.model_name = model_name
-        self.test_connection()
-    
-    def test_connection(self):
-        """Test if LLM server is running"""
-        try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                json={
-                    "model": self.model_name,
-                    "messages": [{"role": "user", "content": "Hi"}],
-                    "max_tokens": 5
-                },
-                timeout=10
-            )
-            if response.status_code == 200:
-                print(f"Connected to LLM at {self.base_url}")
-                return True
-            else:
-                print(f"LLM server error: {response.status_code}")
-                return False
-        except Exception as e:
-            print(f"Cannot connect to LLM: {e}")
-            print(f"   Please start LM Studio with {self.model_name}")
-            return False
-    
-    def query(self, prompt, max_tokens=100):
-        """Send query to LLM and get response"""
-        try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                json={
-                    "model": self.model_name,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.0,
-                    "max_tokens": max_tokens
-                },
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                return response.json()['choices'][0]['message']['content']
-            else:
-                print(f"Error {response.status_code}: {response.text}")
-                return None
-        except Exception as e:
-            print(f"Query error: {e}")
-            return None
-    
-    def parse_evaluation(self, text):
+    def __init__(self, model_path, backend_type="vllm"):
         """
-        Flexible parser that handles multiple output formats:
-        - <evaluation>True</evaluation>
-        - {"Match": "True"}
-        - "Answer: True"
-        - Just "True" or "False"
-        - "Yes" or "No"
+        Initialize the LLM judge with a local model.
+        
+        Args:
+            model_path: Path to model (local or HuggingFace ID)
+            backend_type: 'hf' or 'vllm'
         """
-        if not text:
-            return None
-        
-        text = str(text)
-        
-        # Method 1: Look for <evaluation> tags (original format)
-        eval_match = re.search(r'<evaluation>\s*(True|False)\s*</evaluation>', text, re.IGNORECASE)
-        if eval_match:
-            return eval_match.group(1).lower() == 'true'
-        
-        # Method 2: Look for JSON with "Match" field
-        try:
-            # Try to find JSON in the text
-            json_match = re.search(r'\{[^}]*"Match"\s*:\s*"(True|False)"[^}]*\}', text, re.IGNORECASE)
-            if json_match:
-                return 'true' in json_match.group(1).lower()
-        except:
-            pass
-        
-        # Method 3: Look for "Answer: True/False"
-        answer_match = re.search(r'Answer:\s*(True|False)', text, re.IGNORECASE)
-        if answer_match:
-            return answer_match.group(1).lower() == 'true'
-        
-        # Method 4: Look for standalone True/False/Yes/No
-        # Clean the text first
-        clean_text = text.strip().split('\n')[0]  # Take first line
-        
-        # Yes/No mapping
-        if re.match(r'^\s*(Yes|True)\b', clean_text, re.IGNORECASE):
-            return True
-        if re.match(r'^\s*(No|False)\b', clean_text, re.IGNORECASE):
-            return False
-        
-        # Look anywhere in first 50 chars
-        first_part = clean_text[:50]
-        if re.search(r'\bTrue\b', first_part, re.IGNORECASE):
-            return True
-        if re.search(r'\bFalse\b', first_part, re.IGNORECASE):
-            return False
-        
-        print(f"Could not parse: {text[:100]}")
-        return None
+        self.model_path = model_path
+        self.backend_type = backend_type
+        self._backend = None
     
-    def evaluate_diagnosis_match(self, real_diagnoses, predicted_diagnosis):
+    def get_backend(self):
+        """Lazy load the backend"""
+        if self._backend is None:
+            print(f"\nInitializing {self.backend_type.upper()} judge backend...")
+            print(f"Model: {self.model_path}")
+            self._backend = create_backend(self.backend_type, self.model_path)
+            print("[OK] Judge model loaded\n")
+        return self._backend
+    
+    def evaluate_diagnosis_match(self, real_diagnosis, predicted_diagnosis):
         """
-        Evaluate if a single predicted diagnosis matches any real diagnosis
+        Evaluate if a predicted diagnosis matches the real diagnosis.
         Returns: True if match, False if no match, None if parse failed
         """
-        # Yes/No prompt - MedGemma-4B responds cleanly to this
-        prompt = f"""Real diagnosis: {real_diagnoses}
+        prompt = f"""You are a medical expert evaluating diagnosis predictions.
+
+Real diagnosis: {real_diagnosis}
 Predicted diagnosis: {predicted_diagnosis}
 
-Does the predicted diagnosis match the real diagnosis (same meaning or broader category)?
-Answer: """
+Does the predicted diagnosis match the real diagnosis (same condition, synonym, or closely related)?
+
+Answer with ONLY "Yes" or "No":"""
         
-        response = self.query(prompt, max_tokens=5)
+        backend = self.get_backend()
+        responses = backend.generate_batch([prompt], max_tokens=10)
         
-        # Parse: Look for Yes/No/True/False in first word
-        if response:
-            first_word = response.strip().split()[0].lower().rstrip(',.')
+        if responses and responses[0]:
+            response = responses[0].strip().lower()
+            first_word = response.split()[0].rstrip('.,!') if response.split() else ""
             if first_word in ['yes', 'true']:
                 return True
             elif first_word in ['no', 'false']:
@@ -144,161 +71,157 @@ Answer: """
         
         return None
     
-    def evaluate_diagnosis_triple(self, real_diagnoses, pred1, pred2, pred3):
+    def evaluate_batch(self, cases):
         """
-        Evaluate 3 predictions at once (original method)
-        Returns: list of 3 booleans or None values
+        Evaluate multiple diagnosis pairs in batch for efficiency.
+        
+        Args:
+            cases: List of (real_diagnosis, predicted_diagnosis) tuples
+        
+        Returns: List of True/False/None results
         """
-        # Ask 3 separate yes/no questions
-        prompt = f"""Real diagnosis: {real_diagnoses}
-
-Question 1: Does "{pred1}" match (same meaning or broader category)? 
-Question 2: Does "{pred2}" match (same meaning or broader category)?
-Question 3: Does "{pred3}" match (same meaning or broader category)?
-
-Answer each with Yes or No:
-1. """
+        prompts = []
+        for real_diag, pred_diag in cases:
+            prompt = f"""You are a medical expert. Does "{pred_diag}" match "{real_diag}" (same/similar condition)?
+Answer: """
+            prompts.append(prompt)
         
-        response = self.query(prompt, max_tokens=30)
+        backend = self.get_backend()
+        responses = backend.generate_batch(prompts, max_tokens=5)
         
-        if not response:
-            return [None, None, None]
-        
-        # Extract Yes/No from response
         results = []
-        lines = response.split('\n')
-        
-        for line in lines[:3]:  # Check first 3 lines
-            first_word = line.strip().split()[0].lower().rstrip(',.') if line.strip().split() else ""
-            if first_word in ['yes', 'true']:
-                results.append(True)
-            elif first_word in ['no', 'false']:
-                results.append(False)
-            elif len(results) > 0:  # Only append None if we've started getting results
+        for response in responses:
+            if response:
+                first_word = response.strip().split()[0].lower().rstrip('.,!') if response.strip().split() else ""
+                if first_word in ['yes', 'true']:
+                    results.append(True)
+                elif first_word in ['no', 'false']:
+                    results.append(False)
+                else:
+                    results.append(None)
+            else:
                 results.append(None)
         
-        # Pad with None if we didn't get 3 results
-        while len(results) < 3:
-            results.append(None)
-        
-        return results[:3]
+        return results
 
 
-def evaluate_diagnosis_results(csv_path, judge, method='one_by_one'):
+def parse_diagnoses(text):
+    """Extract diagnoses from <diagnosis> tags"""
+    if pd.isna(text):
+        return [None, None, None]
+    
+    matches = re.findall(r'<diagnosis>(.*?)</diagnosis>', str(text), re.DOTALL | re.IGNORECASE)
+    diagnoses = [m.strip() for m in matches][:3]
+    
+    while len(diagnoses) < 3:
+        diagnoses.append(None)
+    
+    return diagnoses[:3]
+
+
+def evaluate_diagnosis_results(csv_path, judge, ground_truth_col='primary_diagnosis'):
     """
     Evaluate diagnosis predictions using LLM-as-judge
     
     Args:
         csv_path: Path to results CSV
         judge: LLMJudge instance
-        method: 'one_by_one' (reliable) or 'batch' (faster)
+        ground_truth_col: Column name for ground truth diagnosis
     """
-    print(f"\n{'='*80}")
+    print(f"\n{'='*70}")
     print(f"Evaluating: {Path(csv_path).name}")
-    print(f"Method: {method}")
-    print('='*80)
+    print('='*70)
     
     df = pd.read_csv(csv_path)
     
-    # Determine user type from filename
-    user_type = 'general' if 'general' in str(csv_path).lower() else 'clinical'
-    pred_col = f'diag_spec_medgemma-4b-it-mlx_{user_type}'
+    # Find prediction column
+    pred_cols = [c for c in df.columns if 'medgemma' in c.lower() and ('diag' in c.lower() or 'spec' in c.lower())]
+    if not pred_cols:
+        print("No prediction column found!")
+        return None
     
-    print(f"User type: {user_type}")
+    pred_col = pred_cols[0]
     print(f"Prediction column: {pred_col}")
-    print(f"Total cases: {len(df)}\n")
+    print(f"Ground truth column: {ground_truth_col}")
+    print(f"Total cases: {len(df)}")
     
-    # Parse predictions to extract diagnoses
-    def parse_diagnoses(text):
-        """Extract 3 diagnoses from model output"""
-        if pd.isna(text):
-            return [None, None, None]
-        
-        # Find all <diagnosis> tags
-        matches = re.findall(r'<diagnosis>(.*?)</diagnosis>', str(text), re.DOTALL | re.IGNORECASE)
-        
-        # Clean and take first 3
-        diagnoses = [m.strip() for m in matches][:3]
-        
-        # Pad with None if less than 3
-        while len(diagnoses) < 3:
-            diagnoses.append(None)
-        
-        return diagnoses[:3]
+    # Check if ground truth exists
+    if ground_truth_col not in df.columns:
+        print(f"\nWARNING: Ground truth column '{ground_truth_col}' not found!")
+        print(f"Available columns: {df.columns.tolist()}")
+        return None
     
-    # Extract predictions
-    print("Parsing predictions...")
-    df['pred_diag_1'] = None
-    df['pred_diag_2'] = None
-    df['pred_diag_3'] = None
+    # Parse predictions
+    print("\nParsing predictions...")
+    for i in range(3):
+        df[f'pred_diag_{i+1}'] = None
     
     for idx, row in df.iterrows():
         preds = parse_diagnoses(row[pred_col])
-        df.at[idx, 'pred_diag_1'] = preds[0]
-        df.at[idx, 'pred_diag_2'] = preds[1]
-        df.at[idx, 'pred_diag_3'] = preds[2]
+        for i in range(3):
+            df.at[idx, f'pred_diag_{i+1}'] = preds[i]
     
-    # Get ground truth
-    ground_truth_col = 'diagnosis_list'  # or use primary_diagnosis
+    # Build evaluation cases
+    print("Building evaluation cases...")
+    eval_cases = []
+    case_indices = []
     
-    # Evaluate with LLM-as-judge
-    print(f"\nEvaluating with LLM-as-judge ({method} method)...")
+    for idx, row in df.iterrows():
+        real_diag = row[ground_truth_col]
+        if pd.isna(real_diag):
+            continue
+        
+        for i in range(1, 4):
+            pred_diag = row[f'pred_diag_{i}']
+            if pred_diag:
+                eval_cases.append((real_diag, pred_diag))
+                case_indices.append((idx, i))
     
+    print(f"Total evaluations: {len(eval_cases)}")
+    
+    # Evaluate in batches
+    print("\nEvaluating with LLM-as-judge...")
     df['eval_diag_1'] = None
     df['eval_diag_2'] = None
     df['eval_diag_3'] = None
     
-    if method == 'one_by_one':
-        # Evaluate each prediction separately (more reliable)
-        for idx, row in tqdm(df.iterrows(), total=len(df), desc="Evaluating"):
-            real_diag = row[ground_truth_col]
-            
-            for i in [1, 2, 3]:
-                pred_diag = row[f'pred_diag_{i}']
-                if pred_diag:
-                    result = judge.evaluate_diagnosis_match(real_diag, pred_diag)
-                    df.at[idx, f'eval_diag_{i}'] = result
-                    time.sleep(0.1)  # Small delay to avoid overwhelming the server
+    batch_size = 10
+    all_results = []
     
-    else:  # batch method
-        # Evaluate 3 predictions together (faster but less reliable for small models)
-        for idx, row in tqdm(df.iterrows(), total=len(df), desc="Evaluating"):
-            real_diag = row[ground_truth_col]
-            pred1 = row['pred_diag_1']
-            pred2 = row['pred_diag_2']
-            pred3 = row['pred_diag_3']
-            
-            if pred1 or pred2 or pred3:
-                results = judge.evaluate_diagnosis_triple(real_diag, pred1, pred2, pred3)
-                df.at[idx, 'eval_diag_1'] = results[0]
-                df.at[idx, 'eval_diag_2'] = results[1]
-                df.at[idx, 'eval_diag_3'] = results[2]
-                time.sleep(0.1)
+    for i in tqdm(range(0, len(eval_cases), batch_size), desc="Batches"):
+        batch = eval_cases[i:i+batch_size]
+        results = judge.evaluate_batch(batch)
+        all_results.extend(results)
+    
+    # Map results back to dataframe
+    for (idx, diag_num), result in zip(case_indices, all_results):
+        df.at[idx, f'eval_diag_{diag_num}'] = result
     
     # Calculate metrics
-    print("\n" + "="*80)
+    print("\n" + "="*70)
     print("RESULTS")
-    print("="*80)
+    print("="*70)
     
-    # Count matches
     total_predictions = 0
     total_matches = 0
     
-    for i in [1, 2, 3]:
-        valid = df[f'eval_diag_{i}'].notna().sum()
-        matches = df[f'eval_diag_{i}'].sum()
+    for i in range(1, 4):
+        col = f'eval_diag_{i}'
+        valid = df[col].notna().sum()
+        matches = df[col].sum() if valid > 0 else 0
         
         print(f"\nDiagnosis {i}:")
         print(f"  Valid evaluations: {valid}/{len(df)}")
-        print(f"  Matches: {matches}/{valid} ({matches/valid*100:.1f}%)" if valid > 0 else "  No valid evaluations")
+        if valid > 0:
+            print(f"  Matches: {int(matches)}/{valid} ({matches/valid*100:.1f}%)")
         
         total_predictions += valid
         total_matches += matches
     
-    print(f"\n{'='*80}")
-    print(f"OVERALL ACCURACY:")
-    print(f"  {total_matches}/{total_predictions} = {total_matches/total_predictions*100:.1f}%")
-    print("="*80)
+    if total_predictions > 0:
+        print(f"\n{'='*70}")
+        print(f"OVERALL ACCURACY: {int(total_matches)}/{total_predictions} = {total_matches/total_predictions*100:.1f}%")
+        print("="*70)
     
     # Save results
     output_path = str(csv_path).replace('.csv', '_llm_evaluated.csv')
@@ -309,55 +232,62 @@ def evaluate_diagnosis_results(csv_path, judge, method='one_by_one'):
 
 
 def main():
-    print("="*80)
+    parser = argparse.ArgumentParser(description='LLM-as-Judge Diagnosis Evaluation')
+    parser.add_argument('--results-dir', default='benchmark/results',
+                        help='Directory containing result CSV files')
+    parser.add_argument('--model-path', default='google/medgemma-4b-it',
+                        help='Path to judge model')
+    parser.add_argument('--backend', choices=['hf', 'vllm'], default='vllm',
+                        help='Backend: hf (HuggingFace) or vllm')
+    parser.add_argument('--ground-truth-col', default='primary_diagnosis',
+                        help='Column name for ground truth diagnosis')
+    parser.add_argument('--latest', action='store_true',
+                        help='Evaluate the latest run only')
+    
+    args = parser.parse_args()
+    
+    print("="*70)
     print("LLM-AS-JUDGE DIAGNOSIS EVALUATION")
-    print("="*80)
+    print("="*70)
+    print(f"Backend: {args.backend.upper()}")
+    print(f"Judge Model: {args.model_path}")
+    
+    # Find diagnosis result files
+    results_dir = Path(args.results_dir)
+    diagnosis_files = list(results_dir.glob("diagnosis_specialty_*.csv"))
+    diagnosis_files = [f for f in diagnosis_files if 'evaluated' not in str(f)]
+    
+    if not diagnosis_files:
+        print(f"\nNo diagnosis files found in {results_dir}")
+        return 1
+    
+    # Sort by modification time (newest first)
+    diagnosis_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    
+    if args.latest:
+        # Take only the 2 most recent (general + clinical)
+        diagnosis_files = diagnosis_files[:2]
+    
+    print(f"\nFound {len(diagnosis_files)} file(s) to evaluate")
     
     # Initialize judge
-    judge = LLMJudge(
-        base_url="http://localhost:1234/v1",
-        model_name="medgemma-4b-it-mlx"
-    )
-    
-    # Find result files
-    results_dir = Path("results")
-    
-    diagnosis_files = [
-        results_dir / "diagnosis_specialty_general_medgemma-4b-it-mlx_20251023_211152.csv",
-        results_dir / "diagnosis_specialty_clinical_medgemma-4b-it-mlx_20251023_211152.csv"
-    ]
-    
-    # Check which files exist
-    existing_files = [f for f in diagnosis_files if f.exists()]
-    
-    if not existing_files:
-        print("\nNo result files found in results/")
-        print("Expected files:")
-        for f in diagnosis_files:
-            print(f"  - {f.name}")
-        return
-    
-    print(f"\nFound {len(existing_files)} result file(s)")
-    
-    # Choose evaluation method
-    print("\nEvaluation methods:")
-    print("1. one_by_one - Evaluate each diagnosis separately (slower, more reliable)")
-    print("2. batch - Evaluate 3 diagnoses together (faster, may be less reliable)")
-    
-    method = input("\nChoose method (1 or 2) [default: 1]: ").strip()
-    method = 'batch' if method == '2' else 'one_by_one'
+    judge = LLMJudge(model_path=args.model_path, backend_type=args.backend)
     
     # Evaluate each file
-    for csv_file in existing_files:
+    for csv_file in diagnosis_files:
         try:
-            evaluate_diagnosis_results(csv_file, judge, method=method)
+            evaluate_diagnosis_results(csv_file, judge, args.ground_truth_col)
         except Exception as e:
             print(f"\nError evaluating {csv_file.name}: {e}")
             import traceback
             traceback.print_exc()
     
-    print("\nEvaluation complete!")
+    print("\n" + "="*70)
+    print("EVALUATION COMPLETE")
+    print("="*70)
+    
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
