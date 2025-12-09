@@ -154,7 +154,7 @@ class VLLMBackend(InferenceBackend):
     Uses PagedAttention and continuous batching for optimal GPU utilization.
     """
     
-    def __init__(self, model_path: str, tensor_parallel_size: int = 1):
+    def __init__(self, model_path: str, tensor_parallel_size: int = 1, quantization: str = None):
         from vllm import LLM, SamplingParams
         
         print("\n" + "=" * 70)
@@ -162,17 +162,23 @@ class VLLMBackend(InferenceBackend):
         print("=" * 70)
         print(f"Model: {model_path}")
         print(f"Tensor Parallel Size: {tensor_parallel_size}")
+        print(f"Quantization: {quantization or 'None (bfloat16)'}")
         
         start_time = time.time()
         
-        # Initialize vLLM
-        self.llm = LLM(
-            model=model_path,
-            tensor_parallel_size=tensor_parallel_size,
-            trust_remote_code=True,
-            max_model_len=4096,
-            gpu_memory_utilization=0.90
-        )
+        # Initialize vLLM with optional quantization
+        llm_kwargs = {
+            "model": model_path,
+            "tensor_parallel_size": tensor_parallel_size,
+            "trust_remote_code": True,
+            "max_model_len": 4096,
+            "gpu_memory_utilization": 0.95
+        }
+        
+        if quantization:
+            llm_kwargs["quantization"] = quantization
+        
+        self.llm = LLM(**llm_kwargs)
         
         self.model_path = model_path
         self.SamplingParams = SamplingParams
@@ -216,13 +222,17 @@ def create_backend(backend_type: str, model_path: str, **kwargs) -> InferenceBac
         backend_type: "hf" for HuggingFace, "vllm" for vLLM
         model_path: Path to the model directory
         **kwargs: Additional backend-specific arguments
+            - tensor_parallel_size: Number of GPUs for tensor parallelism (vLLM)
+            - quantization: Quantization method (vLLM: "bitsandbytes", "awq", "gptq", etc.)
+            - device: Device to use (HuggingFace)
         
     Returns:
         InferenceBackend instance
     """
     if backend_type.lower() == "vllm":
         tensor_parallel = kwargs.get("tensor_parallel_size", 1)
-        return VLLMBackend(model_path, tensor_parallel_size=tensor_parallel)
+        quantization = kwargs.get("quantization", None)
+        return VLLMBackend(model_path, tensor_parallel_size=tensor_parallel, quantization=quantization)
     elif backend_type.lower() in ("hf", "huggingface"):
         device = kwargs.get("device", "auto")
         return HuggingFaceBackend(model_path, device=device)
