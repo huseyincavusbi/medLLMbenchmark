@@ -201,23 +201,34 @@ class ResultsEvaluator:
         # Limit to top 3
         return results[:3]
     
+    def fuzzy_match_specialty(self, pred, gt):
+        """Check if prediction fuzzy-matches ground truth specialty"""
+        if not pred or pd.isna(gt):
+            return False
+        pred = str(pred).lower().strip()
+        gt_lower = str(gt).lower().strip()
+        
+        if pred == gt_lower:
+            return True
+        if pred in gt_lower or gt_lower in pred:
+            return True
+        return False
+    
     def evaluate_specialty_diagnosis(self, df, prediction_col, task_name):
-        """Evaluate specialty and diagnosis predictions"""
+        """Evaluate specialty and diagnosis predictions with ground truth"""
         print(f"\n{'='*70}")
         print(f"Evaluating: {task_name}")
         print(f"{'='*70}")
         
-        # Parse specialties
+        # Parse specialties and diagnoses
         df['spec_parsed'] = df[prediction_col].apply(
             lambda x: self.parse_specialty_diagnosis(x, 'specialty')
         )
-        
-        # Parse diagnoses
         df['diag_parsed'] = df[prediction_col].apply(
             lambda x: self.parse_specialty_diagnosis(x, 'diagnosis')
         )
         
-        # Check if we have parsed results
+        # Check valid predictions
         valid_spec = df['spec_parsed'].apply(len) > 0
         valid_diag = df['diag_parsed'].apply(len) > 0
         
@@ -225,7 +236,7 @@ class ResultsEvaluator:
         print(f"Valid specialty predictions: {valid_spec.sum()} ({(valid_spec.sum()/len(df)*100):.1f}%)")
         print(f"Valid diagnosis predictions: {valid_diag.sum()} ({(valid_diag.sum()/len(df)*100):.1f}%)")
         
-        # Store metrics
+        # Initialize metrics
         self.metrics[task_name] = {
             'total_cases': len(df),
             'valid_specialty': int(valid_spec.sum()),
@@ -233,16 +244,43 @@ class ResultsEvaluator:
             'unparsed': len(df) - max(valid_spec.sum(), valid_diag.sum())
         }
         
-        # Note: Full evaluation requires ground truth specialty/diagnosis
-        # and potentially LLM-as-judge for semantic matching
-        print("\nNote: Full accuracy metrics require:")
-        print("   - Ground truth specialty labels")
-        print("   - Ground truth diagnosis labels")
-        print("   - LLM-as-judge for semantic diagnosis matching")
-        print("\nTo compute full metrics, run:")
-        print("   python ../postprocess_specialty_prediction.py")
-        print("   python ../postprocess_diagnosis_prediction.py")
-        print("   python ../diagnosis_evaluation.py")
+        # Try to load ground truth for specialty
+        dataset_dir = Path(__file__).parent.parent.parent / "dataset"
+        spec_gt_file = dataset_dir / "specialty_referral.csv"
+        
+        if spec_gt_file.exists() and 'stay_id' in df.columns:
+            print("\n--- Specialty Accuracy (with ground truth) ---")
+            spec_gt = pd.read_csv(spec_gt_file)[['stay_id', 'specialty']]
+            df_with_gt = df.merge(spec_gt, on='stay_id', how='inner')
+            
+            if len(df_with_gt) > 0:
+                top1_match = 0
+                top3_match = 0
+                total_with_gt = 0
+                
+                for _, row in df_with_gt.iterrows():
+                    specs = row['spec_parsed']
+                    gt = row['specialty']
+                    if specs and pd.notna(gt):
+                        total_with_gt += 1
+                        if self.fuzzy_match_specialty(specs[0], gt):
+                            top1_match += 1
+                            top3_match += 1
+                        elif any(self.fuzzy_match_specialty(s, gt) for s in specs):
+                            top3_match += 1
+                
+                if total_with_gt > 0:
+                    top1_pct = top1_match / total_with_gt * 100
+                    top3_pct = top3_match / total_with_gt * 100
+                    print(f"Cases with ground truth: {total_with_gt}")
+                    print(f"Top-1 Fuzzy Accuracy: {top1_match}/{total_with_gt} = {top1_pct:.1f}%")
+                    print(f"Top-3 Fuzzy Accuracy: {top3_match}/{total_with_gt} = {top3_pct:.1f}%")
+                    
+                    self.metrics[task_name]['specialty_top1_accuracy'] = top1_pct
+                    self.metrics[task_name]['specialty_top3_accuracy'] = top3_pct
+                    self.metrics[task_name]['specialty_cases_with_gt'] = total_with_gt
+        else:
+            print("\nNote: No specialty ground truth found or no stay_id column")
     
     def evaluate_run(self, run_id):
         """Evaluate all tasks for a benchmark run"""
