@@ -23,16 +23,18 @@ from functions.backends import create_backend
 class LLMJudge:
     """LLM-as-judge using local GPU backends (HuggingFace or vLLM)"""
     
-    def __init__(self, model_path, backend_type="vllm"):
+    def __init__(self, model_path, backend_type="vllm", quantization=None):
         """
         Initialize the LLM judge with a local model.
         
         Args:
             model_path: Path to model (local or HuggingFace ID)
             backend_type: 'hf' or 'vllm'
+            quantization: Optional quantization method (vLLM: "bitsandbytes", "awq", etc.)
         """
         self.model_path = model_path
         self.backend_type = backend_type
+        self.quantization = quantization
         self._backend = None
     
     def get_backend(self):
@@ -40,7 +42,9 @@ class LLMJudge:
         if self._backend is None:
             print(f"\nInitializing {self.backend_type.upper()} judge backend...")
             print(f"Model: {self.model_path}")
-            self._backend = create_backend(self.backend_type, self.model_path)
+            if self.quantization:
+                print(f"Quantization: {self.quantization}")
+            self._backend = create_backend(self.backend_type, self.model_path, quantization=self.quantization)
             print("[OK] Judge model loaded\n")
         return self._backend
     
@@ -77,32 +81,93 @@ Answer with ONLY "Yes" or "No":"""
         
         Args:
             cases: List of (real_diagnosis, predicted_diagnosis) tuples
+            Note: real_diagnosis may be a list like "['Diag1', 'Diag2']"
         
         Returns: List of True/False/None results
         """
+        # Parse ground truth lists and expand into individual comparisons
+        expanded_cases = []
+        case_mapping = []  # Maps expanded index back to original case index
+        
+        for orig_idx, (real_diag, pred_diag) in enumerate(cases):
+            # Parse the ground truth - it might be a stringified list
+            gt_diagnoses = self._parse_ground_truth(real_diag)
+            for gt_diag in gt_diagnoses:
+                expanded_cases.append((gt_diag, pred_diag))
+                case_mapping.append(orig_idx)
+        
+        # Build prompts for expanded cases
         prompts = []
-        for real_diag, pred_diag in cases:
-            prompt = f"""You are a medical expert. Does "{pred_diag}" match "{real_diag}" (same/similar condition)?
+        for real_diag, pred_diag in expanded_cases:
+            prompt = f"""Real diagnosis: {real_diag}
+Predicted diagnosis: {pred_diag}
+
+Does the predicted diagnosis match the real diagnosis (same meaning or broader category)?
 Answer: """
             prompts.append(prompt)
         
         backend = self.get_backend()
-        responses = backend.generate_batch(prompts, max_tokens=5)
+        responses = backend.generate_batch(prompts, max_tokens=20)
         
-        results = []
+        # Parse responses
+        expanded_results = []
         for response in responses:
-            if response:
-                first_word = response.strip().split()[0].lower().rstrip('.,!') if response.strip().split() else ""
-                if first_word in ['yes', 'true']:
-                    results.append(True)
-                elif first_word in ['no', 'false']:
-                    results.append(False)
-                else:
-                    results.append(None)
-            else:
-                results.append(None)
+            result = self._parse_yes_no(response)
+            expanded_results.append(result)
         
-        return results
+        # Aggregate results: True if ANY ground truth diagnosis matches
+        final_results = [None] * len(cases)
+        for exp_idx, result in enumerate(expanded_results):
+            orig_idx = case_mapping[exp_idx]
+            if result is True:
+                final_results[orig_idx] = True
+            elif final_results[orig_idx] is None and result is False:
+                final_results[orig_idx] = False
+        
+        return final_results
+    
+    def _parse_ground_truth(self, gt_string):
+        """Parse ground truth which may be a stringified list like ['Diag1', 'Diag2']"""
+        import ast
+        
+        gt_string = str(gt_string).strip()
+        
+        # Try to parse as Python list
+        if gt_string.startswith('[') and gt_string.endswith(']'):
+            try:
+                parsed = ast.literal_eval(gt_string)
+                if isinstance(parsed, list):
+                    return [str(d).strip() for d in parsed if d]
+            except (ValueError, SyntaxError):
+                pass
+        
+        # Return as single-element list
+        return [gt_string]
+    
+    def _parse_yes_no(self, response):
+        """Parse Yes/No from model response with multiple fallback strategies"""
+        if not response:
+            return None
+        
+        response = str(response).strip().lower()
+        
+        # Strategy 1: Check first word
+        words = response.split()
+        if words:
+            first_word = words[0].rstrip('.,!:')
+            if first_word in ['yes', 'true', 'correct', 'match', 'matches']:
+                return True
+            elif first_word in ['no', 'false', 'incorrect', 'different', 'not']:
+                return False
+        
+        # Strategy 2: Look for yes/no anywhere in first 50 chars
+        first_part = response[:50]
+        if 'yes' in first_part or 'match' in first_part:
+            return True
+        elif 'no' in first_part or 'not' in first_part or 'different' in first_part:
+            return False
+        
+        return None
 
 
 def parse_diagnoses(text):
@@ -119,7 +184,7 @@ def parse_diagnoses(text):
     return diagnoses[:3]
 
 
-def evaluate_diagnosis_results(csv_path, judge, ground_truth_col='primary_diagnosis'):
+def evaluate_diagnosis_results(csv_path, judge, ground_truth_col='primary_diagnosis', limit=None):
     """
     Evaluate diagnosis predictions using LLM-as-judge
     
@@ -127,6 +192,7 @@ def evaluate_diagnosis_results(csv_path, judge, ground_truth_col='primary_diagno
         csv_path: Path to results CSV
         judge: LLMJudge instance
         ground_truth_col: Column name for ground truth diagnosis
+        limit: Optional limit on number of cases to evaluate
     """
     print(f"\n{'='*70}")
     print(f"Evaluating: {Path(csv_path).name}")
@@ -134,8 +200,13 @@ def evaluate_diagnosis_results(csv_path, judge, ground_truth_col='primary_diagno
     
     df = pd.read_csv(csv_path)
     
-    # Find prediction column
-    pred_cols = [c for c in df.columns if 'medgemma' in c.lower() and ('diag' in c.lower() or 'spec' in c.lower())]
+    # Apply limit if specified
+    if limit:
+        df = df.head(limit)
+        print(f"Limited to first {limit} cases for testing")
+    
+    # Find prediction column (more flexible matching)
+    pred_cols = [c for c in df.columns if 'diag_spec' in c.lower()]
     if not pred_cols:
         print("No prediction column found!")
         return None
@@ -185,7 +256,7 @@ def evaluate_diagnosis_results(csv_path, judge, ground_truth_col='primary_diagno
     df['eval_diag_2'] = None
     df['eval_diag_3'] = None
     
-    batch_size = 10
+    batch_size = 500
     all_results = []
     
     for i in tqdm(range(0, len(eval_cases), batch_size), desc="Batches"):
@@ -235,7 +306,7 @@ def main():
     parser = argparse.ArgumentParser(description='LLM-as-Judge Diagnosis Evaluation')
     parser.add_argument('--results-dir', default='benchmark/results',
                         help='Directory containing result CSV files')
-    parser.add_argument('--model-path', default='google/medgemma-4b-it',
+    parser.add_argument('--model-path', default='prometheus-eval/prometheus-8x7b-v2.0',
                         help='Path to judge model')
     parser.add_argument('--backend', choices=['hf', 'vllm'], default='vllm',
                         help='Backend: hf (HuggingFace) or vllm')
@@ -243,6 +314,13 @@ def main():
                         help='Column name for ground truth diagnosis')
     parser.add_argument('--latest', action='store_true',
                         help='Evaluate the latest run only')
+    parser.add_argument('--limit', type=int, default=None,
+                        help='Limit number of cases to evaluate (for testing)')
+    parser.add_argument('--file', type=str, default=None,
+                        help='Evaluate a specific file only')
+    parser.add_argument('--quantization', type=str, default=None,
+                        choices=['bitsandbytes', 'awq', 'gptq', 'fp8'],
+                        help='Quantization method for vLLM (e.g., bitsandbytes for 8-bit)')
     
     args = parser.parse_args()
     
@@ -251,11 +329,17 @@ def main():
     print("="*70)
     print(f"Backend: {args.backend.upper()}")
     print(f"Judge Model: {args.model_path}")
+    if args.quantization:
+        print(f"Quantization: {args.quantization}")
     
     # Find diagnosis result files
     results_dir = Path(args.results_dir)
-    diagnosis_files = list(results_dir.glob("diagnosis_specialty_*.csv"))
-    diagnosis_files = [f for f in diagnosis_files if 'evaluated' not in str(f)]
+    
+    if args.file:
+        diagnosis_files = [Path(args.file)]
+    else:
+        diagnosis_files = list(results_dir.glob("diagnosis_specialty_*.csv"))
+        diagnosis_files = [f for f in diagnosis_files if 'evaluated' not in str(f)]
     
     if not diagnosis_files:
         print(f"\nNo diagnosis files found in {results_dir}")
@@ -271,12 +355,12 @@ def main():
     print(f"\nFound {len(diagnosis_files)} file(s) to evaluate")
     
     # Initialize judge
-    judge = LLMJudge(model_path=args.model_path, backend_type=args.backend)
+    judge = LLMJudge(model_path=args.model_path, backend_type=args.backend, quantization=args.quantization)
     
     # Evaluate each file
     for csv_file in diagnosis_files:
         try:
-            evaluate_diagnosis_results(csv_file, judge, args.ground_truth_col)
+            evaluate_diagnosis_results(csv_file, judge, args.ground_truth_col, limit=args.limit)
         except Exception as e:
             print(f"\nError evaluating {csv_file.name}: {e}")
             import traceback
