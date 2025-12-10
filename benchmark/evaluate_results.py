@@ -126,7 +126,19 @@ class ResultsEvaluator:
         # Compute metrics
         total = len(valid_df)
         exact_match = (valid_df['pred_parsed'] == valid_df['triage']).sum()
-        within_1 = (abs(valid_df['pred_parsed'] - valid_df['triage']) <= 1).sum()
+        
+        # Within-1 range accuracy (over-triage allowed, under-triage forbidden)
+        # GT=1: must predict 1 exactly
+        # GT>1: can predict GT or GT-1 (one level higher acuity = over-triage is safe)
+        def is_within_range(row):
+            pred = row['pred_parsed']
+            gt = row['triage']
+            if gt == 1:
+                return pred == 1  # No tolerance for most critical cases
+            else:
+                return pred == gt or pred == (gt - 1)  # Allow over-triage only
+        
+        within_1 = valid_df.apply(is_within_range, axis=1).sum()
         
         exact_pct = (exact_match / total) * 100
         within_1_pct = (within_1 / total) * 100

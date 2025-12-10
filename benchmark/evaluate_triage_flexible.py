@@ -117,7 +117,9 @@ def evaluate_triage_flexible(filepath):
             if pred == gt:
                 exact_match += 1
                 within_1 += 1
-            elif abs(pred - gt) == 1:
+            # Paper methodology: over-triage allowed, under-triage forbidden
+            # GT=1: no tolerance; GT>1: allow pred = GT-1 (higher acuity)
+            elif gt > 1 and pred == (gt - 1):
                 within_1 += 1
         
         results.append({'pred': pred, 'gt': gt})
