@@ -16,17 +16,18 @@ Scores on LLM-generated specialty labels can differ by up to 25% from clinician-
 ### 4. Instruction Following is Critical
 Models with poor format compliance (e.g., MediPhi-Instruct at 25.6%) lose up to 48% of predictions to parsing failures.
 
-## Quick Results
+## Quick Results - Specialty Performance
 
-| Model | Triage Exact | Triage W1 | Specialty (Clinician GT) |
-|-------|--------------|-----------|--------------------------|
-| **Gemma-3-4B-IT** | **56.9%** | 67.1% | **81.0%** |
-| Ministral-14B | 53.8% | 55.3% | 76.7% |
-| MedGemma-4B-IT | 53.8% | 54.6% | 74.3% |
-| DeepSeek-R1-32B | 50.9% | **71.4%** | 73.4% |
-| MedGemma-27B-IT | 44.3% | 51.6% | 55.6% |
+| Model | General Proportional | General Any Match | Clinical Proportional | Clinical Any Match |
+|-------|----------|---------|-----------|----------|
+| **MedGemma-27B-IT** | **66.7%** | **80.4%** | **67.3%** | **81.0%** |
+| Ministral-14B | 64.1% | 75.6% | 64.0% | 76.7% |
+| Gemma-3-4B-IT | 63.7% | 77.0% | 64.4% | 77.8% |
+| MedGemma-4B-IT | 63.6% | 77.2% | 64.7% | 78.4% |
+| DeepSeek-R1-32B | 63.8% | 75.1% | 64.2% | 76.5% |
+| MediPhi-Instruct | 52.6% | 64.9% | 58.1% | 69.4% |
 
-See detailed results:
+See detailed results of all tasks:
 - [Full Benchmark Results](results/RESULTS_FULL_BENCHMARK.md) (9,149 cases)
 - [Clinician GT Results](results/RESULTS_CLINICIAN_GT.md) (331 cases)
 
