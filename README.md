@@ -26,7 +26,9 @@ Models with poor format compliance (e.g., MediPhi-Instruct at 25.6%) lose up to 
 | DeepSeek-R1-32B | 50.9% | **71.4%** | 73.4% |
 | MedGemma-27B-IT | 44.3% | 51.6% | 55.6% |
 
-See [results/README.md](results/README.md) for full metrics.
+See detailed results:
+- [Full Benchmark Results](results/RESULTS_FULL_BENCHMARK.md) (9,149 cases)
+- [Clinician GT Results](results/RESULTS_CLINICIAN_GT.md) (331 cases)
 
 ## Dataset
 
