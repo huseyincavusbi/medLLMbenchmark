@@ -268,38 +268,89 @@ def evaluate_diagnosis_results(csv_path, judge, ground_truth_col='primary_diagno
     for (idx, diag_num), result in zip(case_indices, all_results):
         df.at[idx, f'eval_diag_{diag_num}'] = result
     
-    # Calculate metrics
+    # Calculate metrics (paper methodology)
     print("\n" + "="*70)
-    print("RESULTS")
+    print("RESULTS (Paper Methodology)")
     print("="*70)
     
-    total_predictions = 0
-    total_matches = 0
+    # Per-case metrics
+    proportional_scores = []
+    any_match_count = 0
+    total_cases = 0
     
+    import ast
+    
+    for idx, row in df.iterrows():
+        # Get ground truth list
+        gt_raw = row[ground_truth_col]
+        if pd.isna(gt_raw):
+            continue
+        
+        try:
+            gt_list = ast.literal_eval(gt_raw) if isinstance(gt_raw, str) and gt_raw.startswith('[') else [gt_raw]
+        except:
+            gt_list = [gt_raw]
+        
+        # Get predictions that were evaluated
+        preds_evaluated = []
+        for i in range(1, 4):
+            if pd.notna(row.get(f'pred_diag_{i}')):
+                preds_evaluated.append(row.get(f'pred_diag_{i}'))
+        
+        if not preds_evaluated:
+            continue
+        
+        total_cases += 1
+        
+        # Count matches for this case
+        matches = 0
+        any_matched = False
+        for i in range(1, 4):
+            eval_result = row.get(f'eval_diag_{i}')
+            if eval_result is True:
+                matches += 1
+                any_matched = True
+        
+        # Proportional: matches / min(len(predictions), len(GT))
+        shorter_len = min(len(preds_evaluated), len(gt_list))
+        proportional = matches / shorter_len if shorter_len > 0 else 0
+        proportional_scores.append(proportional)
+        
+        # Any match
+        if any_matched:
+            any_match_count += 1
+    
+    # Report metrics
+    print(f"\nTotal cases evaluated: {total_cases}")
+    
+    if total_cases > 0:
+        proportional_avg = sum(proportional_scores) / len(proportional_scores) * 100
+        any_match_pct = any_match_count / total_cases * 100
+        
+        print(f"\n--- Paper Metrics ---")
+        print(f"Proportional Match: {proportional_avg:.1f}%")
+        print(f"Any Match (binary): {any_match_count}/{total_cases} = {any_match_pct:.1f}%")
+    
+    # Also report per-slot stats for debugging
+    print(f"\n--- Per-Slot Statistics ---")
     for i in range(1, 4):
         col = f'eval_diag_{i}'
         valid = df[col].notna().sum()
         matches = df[col].sum() if valid > 0 else 0
         
-        print(f"\nDiagnosis {i}:")
-        print(f"  Valid evaluations: {valid}/{len(df)}")
-        if valid > 0:
-            print(f"  Matches: {int(matches)}/{valid} ({matches/valid*100:.1f}%)")
-        
-        total_predictions += valid
-        total_matches += matches
-    
-    if total_predictions > 0:
-        print(f"\n{'='*70}")
-        print(f"OVERALL ACCURACY: {int(total_matches)}/{total_predictions} = {total_matches/total_predictions*100:.1f}%")
-        print("="*70)
+        print(f"Diagnosis {i}: {int(matches)}/{valid} matches" + (f" ({matches/valid*100:.1f}%)" if valid > 0 else ""))
     
     # Save results
     output_path = str(csv_path).replace('.csv', '_llm_evaluated.csv')
     df.to_csv(output_path, index=False)
     print(f"\nResults saved to: {output_path}")
     
-    return df
+    return {
+        'total_cases': total_cases,
+        'proportional_match': proportional_avg if total_cases > 0 else 0,
+        'any_match': any_match_pct if total_cases > 0 else 0,
+        'any_match_count': any_match_count
+    }
 
 
 def main():
@@ -357,14 +408,27 @@ def main():
     # Initialize judge
     judge = LLMJudge(model_path=args.model_path, backend_type=args.backend, quantization=args.quantization)
     
-    # Evaluate each file
+    # Evaluate each file and collect metrics
+    all_metrics = {}
     for csv_file in diagnosis_files:
         try:
-            evaluate_diagnosis_results(csv_file, judge, args.ground_truth_col, limit=args.limit)
+            metrics = evaluate_diagnosis_results(csv_file, judge, args.ground_truth_col, limit=args.limit)
+            if metrics:
+                # Extract model name from filename
+                model_name = csv_file.stem.replace('diagnosis_specialty_', '').rsplit('_', 2)[0]
+                all_metrics[model_name] = metrics
         except Exception as e:
             print(f"\nError evaluating {csv_file.name}: {e}")
             import traceback
             traceback.print_exc()
+    
+    # Save all metrics to JSON
+    if all_metrics:
+        import json
+        metrics_file = results_dir / 'diagnosis_judge_metrics.json'
+        with open(metrics_file, 'w') as f:
+            json.dump(all_metrics, f, indent=2)
+        print(f"\nMetrics saved to: {metrics_file}")
     
     print("\n" + "="*70)
     print("EVALUATION COMPLETE")
