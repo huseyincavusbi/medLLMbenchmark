@@ -261,35 +261,58 @@ class ResultsEvaluator:
         spec_gt_file = dataset_dir / "specialty_referral.csv"
         
         if spec_gt_file.exists() and 'stay_id' in df.columns:
-            print("\n--- Specialty Accuracy (with ground truth) ---")
+            print("\n--- Specialty Accuracy (paper methodology) ---")
             spec_gt = pd.read_csv(spec_gt_file)[['stay_id', 'specialty']]
             df_with_gt = df.merge(spec_gt, on='stay_id', how='inner')
             
             if len(df_with_gt) > 0:
-                top1_match = 0
-                top3_match = 0
+                import ast
+                proportional_scores = []
+                any_match_count = 0
                 total_with_gt = 0
                 
                 for _, row in df_with_gt.iterrows():
-                    specs = row['spec_parsed']
-                    gt = row['specialty']
-                    if specs and pd.notna(gt):
-                        total_with_gt += 1
-                        if self.fuzzy_match_specialty(specs[0], gt):
-                            top1_match += 1
-                            top3_match += 1
-                        elif any(self.fuzzy_match_specialty(s, gt) for s in specs):
-                            top3_match += 1
+                    preds = row['spec_parsed']  # List of predicted specialties
+                    gt_raw = row['specialty']
+                    
+                    if not preds or pd.isna(gt_raw):
+                        continue
+                    
+                    # Parse GT list from string like "['Neurology', 'Pulmonology']"
+                    try:
+                        gt_list = ast.literal_eval(gt_raw) if isinstance(gt_raw, str) else [gt_raw]
+                    except:
+                        gt_list = [gt_raw]
+                    
+                    total_with_gt += 1
+                    
+                    # Count matches (fuzzy)
+                    matches = 0
+                    for pred in preds:
+                        for gt in gt_list:
+                            if self.fuzzy_match_specialty(pred, gt):
+                                matches += 1
+                                break  # Each pred can only match once
+                    
+                    # Proportional: matches / min(len(preds), len(gt_list))
+                    shorter_len = min(len(preds), len(gt_list))
+                    proportional = matches / shorter_len if shorter_len > 0 else 0
+                    proportional_scores.append(proportional)
+                    
+                    # Any match: at least one prediction matched
+                    if matches > 0:
+                        any_match_count += 1
                 
                 if total_with_gt > 0:
-                    top1_pct = top1_match / total_with_gt * 100
-                    top3_pct = top3_match / total_with_gt * 100
-                    print(f"Cases with ground truth: {total_with_gt}")
-                    print(f"Top-1 Fuzzy Accuracy: {top1_match}/{total_with_gt} = {top1_pct:.1f}%")
-                    print(f"Top-3 Fuzzy Accuracy: {top3_match}/{total_with_gt} = {top3_pct:.1f}%")
+                    proportional_avg = sum(proportional_scores) / len(proportional_scores) * 100
+                    any_match_pct = any_match_count / total_with_gt * 100
                     
-                    self.metrics[task_name]['specialty_top1_accuracy'] = top1_pct
-                    self.metrics[task_name]['specialty_top3_accuracy'] = top3_pct
+                    print(f"Cases with ground truth: {total_with_gt}")
+                    print(f"Proportional Match: {proportional_avg:.1f}%")
+                    print(f"Any Match (binary): {any_match_count}/{total_with_gt} = {any_match_pct:.1f}%")
+                    
+                    self.metrics[task_name]['specialty_proportional'] = proportional_avg
+                    self.metrics[task_name]['specialty_any_match'] = any_match_pct
                     self.metrics[task_name]['specialty_cases_with_gt'] = total_with_gt
         else:
             print("\nNote: No specialty ground truth found or no stay_id column")
